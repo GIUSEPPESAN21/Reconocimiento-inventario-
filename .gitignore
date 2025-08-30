@@ -1,10 +1,10 @@
-Ignorar el archivo de credenciales de Firebase
+# Ignorar el archivo de credenciales de Firebase
 serviceAccountKey.json
 
-Ignorar el archivo de variables de entorno
+# Ignorar el archivo de variables de entorno
 .env
 
-Ignorar entornos virtuales de Python y cachés
+# Ignorar entornos virtuales de Python y cachés
 venv/
 *.venv
-pycache/
+__pycache__/
