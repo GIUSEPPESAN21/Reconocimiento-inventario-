@@ -1,16 +1,15 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
-import json # Importante: se necesita para leer el texto del JSON
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def initialize_firebase():
     """
-    Inicializa Firebase de forma inteligente.
-    Busca el secreto en Streamlit Cloud primero, y si no lo encuentra,
-    usa el archivo local serviceAccountKey.json.
+    Inicializa Firebase de forma robusta, corrigiendo el formato de la clave privada
+    para el despliegue en Streamlit Cloud.
     """
     try:
         if not firebase_admin._apps:
@@ -18,13 +17,19 @@ def initialize_firebase():
             if "FIREBASE_SERVICE_ACCOUNT_JSON" in os.environ:
                 creds_json_str = os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"]
                 creds_dict = json.loads(creds_json_str)
+                
+                # --- INICIO DE LA CORRECCIÓN ---
+                # Repara los saltos de línea en la clave privada
+                creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
+                # --- FIN DE LA CORRECCIÓN ---
+
                 cred = credentials.Certificate(creds_dict)
             
             # MÉTODO LOCAL (usa el archivo .json)
             else:
                 cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
                 if not cred_path or not os.path.exists(cred_path):
-                    raise FileNotFoundError("No se encontró 'serviceAccountKey.json'. Asegúrate de que el archivo existe o que el secreto FIREBASE_SERVICE_ACCOUNT_JSON está configurado en Streamlit Cloud.")
+                    raise FileNotFoundError("No se encontró 'serviceAccountKey.json'. Asegúrate de que el archivo existe o que el secreto FIREBASE_SERVICE_ACCOUNT_JSON está configurado.")
                 cred = credentials.Certificate(cred_path)
             
             firebase_admin.initialize_app(cred)
@@ -51,3 +56,4 @@ def add_item(item_name):
     db = firestore.client()
     inventory_ref = db.collection('inventory')
     inventory_ref.add({'name': item_name})
+
