@@ -2,34 +2,32 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import os
 import json
+import base64 # Importante: se necesita para decodificar
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def initialize_firebase():
     """
-    Inicializa Firebase de forma robusta, corrigiendo el formato de la clave privada
-    para el despliegue en Streamlit Cloud.
+    Inicializa Firebase de forma robusta usando Base64 para las credenciales
+    en el despliegue de Streamlit Cloud.
     """
     try:
         if not firebase_admin._apps:
-            # MÉTODO PARA STREAMLIT CLOUD (lee el secreto directamente)
-            if "FIREBASE_SERVICE_ACCOUNT_JSON" in os.environ:
-                creds_json_str = os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"]
-                creds_dict = json.loads(creds_json_str)
+            # MÉTODO PARA STREAMLIT CLOUD (lee el secreto Base64)
+            if "FIREBASE_SERVICE_ACCOUNT_BASE64" in os.environ:
+                # Decodifica la cadena Base64 a un string JSON
+                base64_creds = os.environ["FIREBASE_SERVICE_ACCOUNT_BASE64"]
+                json_creds_str = base64.b64decode(base64_creds).decode('utf-8')
+                creds_dict = json.loads(json_creds_str)
                 
-                # --- INICIO DE LA CORRECCIÓN ---
-                # Repara los saltos de línea en la clave privada
-                creds_dict['private_key'] = creds_dict['private_key'].replace('\\n', '\n')
-                # --- FIN DE LA CORRECCIÓN ---
-
                 cred = credentials.Certificate(creds_dict)
             
             # MÉTODO LOCAL (usa el archivo .json)
             else:
                 cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
                 if not cred_path or not os.path.exists(cred_path):
-                    raise FileNotFoundError("No se encontró 'serviceAccountKey.json'. Asegúrate de que el archivo existe o que el secreto FIREBASE_SERVICE_ACCOUNT_JSON está configurado.")
+                    raise FileNotFoundError("No se encontró 'serviceAccountKey.json'. Asegúrate de que el archivo existe o que el secreto FIREBASE_SERVICE_ACCOUNT_BASE64 está configurado.")
                 cred = credentials.Certificate(cred_path)
             
             firebase_admin.initialize_app(cred)
