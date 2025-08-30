@@ -1,24 +1,34 @@
 import firebase_admin
 from firebase_admin import credentials, firestore
 import os
+import json # Importante: se necesita para leer el texto del JSON
 from dotenv import load_dotenv
 
-# Cargar variables de entorno del archivo .env
 load_dotenv()
 
 def initialize_firebase():
     """
-    Inicializa la app de Firebase usando las credenciales.
-    Evita la reinicialización si ya existe una instancia.
+    Inicializa Firebase de forma inteligente.
+    Busca el secreto en Streamlit Cloud primero, y si no lo encuentra,
+    usa el archivo local serviceAccountKey.json.
     """
     try:
         if not firebase_admin._apps:
-            cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-            if not os.path.exists(cred_path):
-                raise FileNotFoundError(f"El archivo de credenciales no se encuentra en la ruta: {cred_path}")
+            # MÉTODO PARA STREAMLIT CLOUD (lee el secreto directamente)
+            if "FIREBASE_SERVICE_ACCOUNT_JSON" in os.environ:
+                creds_json_str = os.environ["FIREBASE_SERVICE_ACCOUNT_JSON"]
+                creds_dict = json.loads(creds_json_str)
+                cred = credentials.Certificate(creds_dict)
             
-            cred = credentials.Certificate(cred_path)
+            # MÉTODO LOCAL (usa el archivo .json)
+            else:
+                cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                if not cred_path or not os.path.exists(cred_path):
+                    raise FileNotFoundError("No se encontró 'serviceAccountKey.json'. Asegúrate de que el archivo existe o que el secreto FIREBASE_SERVICE_ACCOUNT_JSON está configurado en Streamlit Cloud.")
+                cred = credentials.Certificate(cred_path)
+            
             firebase_admin.initialize_app(cred)
+            
         return firestore.client()
     except Exception as e:
         print(f"Error fatal al inicializar Firebase: {e}")
