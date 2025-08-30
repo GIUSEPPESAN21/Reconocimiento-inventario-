@@ -13,11 +13,19 @@ st.set_page_config(
 )
 
 # --- INITIALIZATION ---
-try:
-    firebase_utils.initialize_firebase()
-except Exception as e:
-    st.error(f"Error de Conexión con Firebase. Asegúrate de que tu archivo 'serviceAccountKey.json' es correcto y está en la misma carpeta. Detalles: {e}")
-    st.stop()
+# Usamos un placeholder mientras se conecta
+status_placeholder = st.empty()
+with status_placeholder.container():
+    with st.spinner("Conectando con la base de datos de Firebase..."):
+        try:
+            firebase_utils.initialize_firebase()
+            status_placeholder.success("✅ Conexión con Firebase exitosa.")
+        except Exception as e:
+            st.error(f"""
+                **Error de Conexión con Firebase.** Asegúrate de que los secretos en Streamlit Cloud estén configurados correctamente.  
+                **Detalles del error:** {e}
+            """)
+            st.stop()
 
 # --- TITLE AND DESCRIPTION ---
 st.title("📦 Inventario Inteligiente con IA")
@@ -31,7 +39,12 @@ with col2:
     st.header("📊 Panel de Control")
 
     try:
-        inventory_list = firebase_utils.get_inventory()
+        # Usamos cache para no llamar a la base de datos en cada re-render
+        @st.cache_data(ttl=60)
+        def get_inventory_cached():
+            return firebase_utils.get_inventory()
+
+        inventory_list = get_inventory_cached()
         inventory_names = [item['name'] for item in inventory_list]
     except Exception as e:
         st.error(f"Error al cargar inventario: {e}")
@@ -43,15 +56,16 @@ with col2:
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
                 st.success(f"'{new_item_name}' añadido.")
+                st.cache_data.clear() # Limpiamos el cache para que se actualice la lista
                 st.rerun()
             else:
                 st.warning("El nombre no puede estar vacío o ya existe.")
 
     st.subheader("📋 Inventario Actual en Firebase")
     if inventory_names:
-        st.dataframe(inventory_names, use_container_width=True, height=200)
+        st.dataframe(inventory_names, use_container_width=True, column_config={"value": "Artículo"})
     else:
-        st.info("Tu inventario está vacío.")
+        st.info("Tu inventario está vacío. Añade un artículo o crea la colección 'inventory' en Firebase.")
     
     st.subheader("🤖 Resultado del Análisis")
     result_placeholder = st.empty()
@@ -77,3 +91,4 @@ with col1:
                     result = gemini_utils.identify_item(img_pil, inventory_names)
                     st.session_state.last_result = result
                     st.rerun()
+
