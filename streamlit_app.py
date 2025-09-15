@@ -12,20 +12,15 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- INITIALIZATION ---
-# Usamos un placeholder mientras se conecta
-status_placeholder = st.empty()
-with status_placeholder.container():
-    with st.spinner("Conectando con la base de datos de Firebase..."):
-        try:
-            firebase_utils.initialize_firebase()
-            status_placeholder.success("✅ Conexión con Firebase exitosa.")
-        except Exception as e:
-            st.error(f"""
-                **Error de Conexión con Firebase.** Asegúrate de que los secretos en Streamlit Cloud estén configurados correctamente.  
-                **Detalles del error:** {e}
-            """)
-            st.stop()
+# --- INICIALIZACIÓN ROBUSTA DE FIREBASE ---
+# Se llama a la función de inicialización al principio para asegurar la conexión.
+# Gracias a @st.cache_resource en firebase_utils, esto solo se ejecuta una vez.
+try:
+    firebase_utils.initialize_firebase()
+except Exception as e:
+    st.error(f"Error crítico al iniciar la conexión con la base de datos: {e}")
+    st.stop()
+
 
 # --- TITLE AND DESCRIPTION ---
 st.title("📦 Inventario Inteligente con IA")
@@ -39,15 +34,16 @@ with col2:
     st.header("📊 Panel de Control")
 
     try:
-        # Usamos cache para no llamar a la base de datos en cada re-render
+        # Usamos cache_data para la función que lee los datos.
         @st.cache_data(ttl=60)
         def get_inventory_cached():
             return firebase_utils.get_inventory()
 
         inventory_list = get_inventory_cached()
         inventory_names = [item['name'] for item in inventory_list]
+
     except Exception as e:
-        st.error(f"Error al cargar inventario: {e}")
+        st.error(f"Error al cargar inventario desde Firebase: {e}")
         inventory_names = []
 
     with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
@@ -56,7 +52,7 @@ with col2:
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
                 st.success(f"'{new_item_name}' añadido.")
-                st.cache_data.clear() # Limpiamos el cache para que se actualice la lista
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.warning("El nombre no puede estar vacío o ya existe.")
@@ -65,7 +61,7 @@ with col2:
     if inventory_names:
         st.dataframe(inventory_names, use_container_width=True, column_config={"value": "Artículo"})
     else:
-        st.info("Tu inventario está vacío. Añade un artículo o crea la colección 'inventory' en Firebase.")
+        st.info("Tu inventario está vacío. Añade un artículo para empezar.")
     
     st.subheader("🤖 Resultado del Análisis")
     result_placeholder = st.empty()
@@ -81,10 +77,8 @@ with col1:
 
     if img_buffer:
         img_pil = Image.open(img_buffer)
-
-        # --- INICIO DE LA MEJORA DE VELOCIDAD ---
-        # Reducimos el tamaño de la imagen antes de enviarla a Gemini.
-        # Imágenes más pequeñas se procesan más rápido.
+        
+        # Optimización: Reducir tamaño de imagen antes de enviar
         max_width = 512
         if img_pil.width > max_width:
             aspect_ratio = img_pil.height / img_pil.width
@@ -92,7 +86,6 @@ with col1:
             img_pil_resized = img_pil.resize((max_width, new_height))
         else:
             img_pil_resized = img_pil
-        # --- FIN DE LA MEJORA ---
 
         st.image(img_pil, caption="Imagen lista para analizar", use_column_width=True)
 
@@ -101,7 +94,7 @@ with col1:
                 st.warning("Añade al menos un artículo a tu inventario antes de analizar.")
             else:
                 with st.spinner("🧠 Gemini está identificando el artículo..."):
-                    # Usamos la imagen redimensionada para el análisis
                     result = gemini_utils.identify_item(img_pil_resized, inventory_names)
                     st.session_state.last_result = result
                     st.rerun()
+
