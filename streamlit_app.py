@@ -28,7 +28,7 @@ with status_placeholder.container():
             st.stop()
 
 # --- TITLE AND DESCRIPTION ---
-st.title("📦 Inventario Inteligiente con IA")
+st.title("📦 Inventario Inteligente con IA")
 st.markdown("Identifica artículos de tu inventario en tiempo real con la cámara, usando **Gemini AI** y **Firebase**.")
 
 # --- INTERFACE STRUCTURE ---
@@ -81,6 +81,19 @@ with col1:
 
     if img_buffer:
         img_pil = Image.open(img_buffer)
+
+        # --- INICIO DE LA MEJORA DE VELOCIDAD ---
+        # Reducimos el tamaño de la imagen antes de enviarla a Gemini.
+        # Imágenes más pequeñas se procesan más rápido.
+        max_width = 512
+        if img_pil.width > max_width:
+            aspect_ratio = img_pil.height / img_pil.width
+            new_height = int(max_width * aspect_ratio)
+            img_pil_resized = img_pil.resize((max_width, new_height))
+        else:
+            img_pil_resized = img_pil
+        # --- FIN DE LA MEJORA ---
+
         st.image(img_pil, caption="Imagen lista para analizar", use_column_width=True)
 
         if st.button("✨ Analizar con Gemini", type="primary", use_container_width=True):
@@ -88,7 +101,7 @@ with col1:
                 st.warning("Añade al menos un artículo a tu inventario antes de analizar.")
             else:
                 with st.spinner("🧠 Gemini está identificando el artículo..."):
-                    result = gemini_utils.identify_item(img_pil, inventory_names)
+                    # Usamos la imagen redimensionada para el análisis
+                    result = gemini_utils.identify_item(img_pil_resized, inventory_names)
                     st.session_state.last_result = result
                     st.rerun()
-
