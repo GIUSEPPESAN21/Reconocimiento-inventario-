@@ -1,31 +1,26 @@
 import google.generativeai as genai
-import os
-from dotenv import load_dotenv
 from PIL import Image
-
-# Cargar variables de entorno del archivo .env
-load_dotenv()
+import streamlit as st
 
 def identify_item(image: Image.Image, inventory_list: list):
     """
-    Usa Gemini Pro Vision para identificar un artículo en una imagen
-    basándose en una lista de artículos de inventario.
+    Usa Gemini Pro Vision para identificar un artículo.
+    Lee la API Key desde los secretos de Streamlit.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("La variable de entorno GEMINI_API_KEY no está definida.")
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        raise ValueError("La variable GEMINI_API_KEY no está configurada en los secretos de Streamlit.")
 
     genai.configure(api_key=api_key)
 
     prompt = f"""
     Eres un experto en clasificación de inventarios. Tu única tarea es identificar el objeto principal en la imagen.
-    
     Compara el objeto con la siguiente lista de artículos de mi inventario:
     {', '.join(inventory_list)}
-
     Responde únicamente con el nombre exacto del artículo de la lista que mejor corresponda.
-    Si el objeto no coincide con ninguno de la lista, responde con 'Artículo no encontrado'.
-    No incluyas explicaciones, saludos ni texto adicional. Solo el nombre del artículo o el mensaje de error.
+    Si el objeto no coincide con ninguno, responde con 'Artículo no encontrado'.
+    No incluyas explicaciones ni texto adicional.
     """
 
     model = genai.GenerativeModel('gemini-pro-vision')
@@ -35,3 +30,4 @@ def identify_item(image: Image.Image, inventory_list: list):
         return response.text.strip()
     except Exception as e:
         return f"Error al contactar la API de Gemini: {e}"
+
