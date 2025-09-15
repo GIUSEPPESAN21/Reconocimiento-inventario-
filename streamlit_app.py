@@ -1,6 +1,6 @@
 import streamlit as st
 from PIL import Image
-import firebase_utils
+import firebase_utils  # Asegúrate de que este import esté presente
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -10,41 +10,43 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- INICIALIZACIÓN DE FIREBASE ---
+# --- INICIALIZACIÓN DE FIREBASE (Ocurre una sola vez) ---
+# Esta función ahora solo asegura que la app esté conectada, no trae datos.
 try:
-    db = firebase_utils.get_db()
+    firebase_utils.initialize_firebase()
+    # Muestra un mensaje de éxito discreto en la barra lateral o en un log.
+    # st.sidebar.success("Conexión con Firebase OK.") 
 except Exception as e:
-    st.error(f"**Error Crítico de Conexión.** No se pudo inicializar Firebase. Detalle: {e}")
+    st.error(f"**Error Crítico de Conexión.** No se pudo inicializar Firebase. Revisa tus secretos. Detalle: {e}")
     st.stop()
 
-# --- TÍTULO Y DESCRIPCIÓN ---
+# --- TÍTULO Y DESCRIPCIÓN (Carga inmediata) ---
 st.title("📦 Inventario Inteligente con IA")
 st.markdown("Identifica artículos de tu inventario en tiempo real con la cámara, usando **Gemini AI** y **Firebase**.")
 
-# --- ESTRUCTURA DE LA INTERFAZ ---
+# --- ESTRUCTURA DE LA INTERFAZ (Carga inmediata) ---
 col1, col2 = st.columns([2, 1])
 
 # --- Columna 2: Panel de Control ---
 with col2:
     st.header("📊 Panel de Control")
 
-    # --- CARGA DEL INVENTARIO CON MANEJO DE ERRORES ---
-    if 'inventory_list' not in st.session_state:
-        try:
-            with st.spinner("Cargando inventario desde Firebase..."):
-                st.session_state.inventory_list = firebase_utils.get_inventory()
-        except Exception as e:
-            st.error("⚠️ Error al Cargar el Inventario desde Firebase.")
-            st.warning("""
-                La aplicación no pudo obtener los datos. Esto suele ocurrir por:
-                1.  **Secretos Incorrectos:** Un error al copiar la variable `FIREBASE_SERVICE_ACCOUNT_BASE64` en Streamlit Cloud.
-                2.  **Reglas de Firestore:** Las reglas de seguridad podrían estar bloqueando el acceso.
-                3.  **Problema de Red:** Un bloqueo de red temporal entre Streamlit y Google.
-            """)
-            st.code(f"Detalles del error: {e}", language="python")
-            st.session_state.inventory_list = [] # Se asigna lista vacía para que la app no se rompa.
+    # --- CARGA DEL INVENTARIO ---
+    # Usamos un placeholder para mostrar un spinner solo en esta sección.
+    inventory_placeholder = st.empty()
+    with inventory_placeholder.container():
+        with st.spinner("Cargando inventario..."):
+            try:
+                # La función ahora se llama desde aquí y tiene manejo de errores
+                inventory_list = firebase_utils.get_inventory()
+                st.session_state.inventory_list = inventory_list
+            except Exception as e:
+                st.error("⚠️ Error al Cargar Inventario.")
+                st.warning("Revisa tus secretos y las reglas de seguridad de Firestore.")
+                st.code(f"Detalles: {e}", language="bash")
+                st.session_state.inventory_list = [] # Evita que la app se rompa
 
-    inventory_list = st.session_state.inventory_list
+    inventory_list = st.session_state.get('inventory_list', [])
     inventory_names = [item['name'] for item in inventory_list if 'name' in item]
 
     with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
@@ -53,7 +55,9 @@ with col2:
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
                 st.success(f"'{new_item_name}' añadido.")
-                del st.session_state.inventory_list
+                # Forzar la recarga de la lista de inventario en la siguiente ejecución
+                if 'inventory_list' in st.session_state:
+                    del st.session_state['inventory_list']
                 st.rerun()
             else:
                 st.warning("El nombre no puede estar vacío o ya existe.")
@@ -79,6 +83,7 @@ with col1:
     if img_buffer:
         img_pil = Image.open(img_buffer)
         
+        # Optimización de imagen
         max_width = 512
         if img_pil.width > max_width:
             aspect_ratio = img_pil.height / img_pil.width
@@ -96,5 +101,4 @@ with col1:
                     result = gemini_utils.identify_item(img_pil, inventory_names)
                     st.session_state.last_result = result
                     st.rerun()
-
 
