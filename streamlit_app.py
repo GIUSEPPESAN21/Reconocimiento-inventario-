@@ -13,7 +13,9 @@ st.set_page_config(
 try:
     firebase_utils.initialize_firebase()
 except Exception as e:
-    st.error(f"**Error Crítico de Conexión.** No se pudo inicializar Firebase. Revisa tus secretos. Detalle: {e}")
+    st.error(f"**Error Crítico de Conexión.** No se pudo inicializar Firebase.")
+    st.error("Por favor, revisa tus secretos en Streamlit Cloud, especialmente `FIREBASE_SERVICE_ACCOUNT_BASE64`.")
+    st.code(f"Detalle del error: {e}", language="bash")
     st.stop()
 
 # --- TÍTULO Y DESCRIPCIÓN ---
