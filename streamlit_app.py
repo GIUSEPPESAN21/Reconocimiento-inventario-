@@ -2,38 +2,34 @@ import streamlit as st
 from PIL import Image
 import firebase_utils
 
-# --- Page Configuration ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     page_title="Inventario Inteligente",
     page_icon="📦",
     layout="wide"
 )
 
-# --- Firebase Initialization ---
-# This will run once and show a clear error if secrets are wrong.
+# --- INICIALIZACIÓN DE FIREBASE ---
 try:
     firebase_utils.initialize_firebase()
 except Exception as e:
-    st.error(f"**Error Crítico de Conexión:** No se pudo inicializar Firebase.")
+    st.error(f"**Error Crítico de Conexión.** No se pudo inicializar Firebase.")
     st.error("Por favor, revisa tus secretos en Streamlit Cloud, especialmente `FIREBASE_SERVICE_ACCOUNT_BASE64`.")
     st.code(f"Detalle del error: {e}", language="bash")
     st.stop()
 
-# --- Title and Description ---
+# --- TÍTULO Y DESCRIPCIÓN ---
 st.title("📦 Inventario Inteligente con IA")
 st.markdown("Identifica artículos de tu inventario en tiempo real con la cámara.")
 
-# --- Layout ---
+# --- ESTRUCTURA ---
 col1, col2 = st.columns([2, 1])
 
-# --- Control Panel (Right Column) ---
 with col2:
     st.header("📊 Panel de Control")
-    # Spinner appears only in this section while loading data
     inventory_placeholder = st.empty()
     with inventory_placeholder, st.spinner("Cargando inventario..."):
         try:
-            # Load inventory and save it to the session state
             inventory_list = firebase_utils.get_inventory()
             st.session_state.inventory_list = inventory_list
         except Exception as e:
@@ -48,7 +44,6 @@ with col2:
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
                 st.success(f"'{new_item_name}' añadido.")
-                # Clear inventory from state to force a reload
                 if 'inventory_list' in st.session_state:
                     del st.session_state['inventory_list']
                 st.rerun()
@@ -67,14 +62,12 @@ with col2:
     else:
         st.info("Esperando análisis...")
 
-# --- Camera and Analysis (Left Column) ---
 with col1:
     st.header("📷 Captura y Análisis")
     img_buffer = st.camera_input("Apunta al artículo y toma una foto", key="camera")
 
     if img_buffer:
         img_pil = Image.open(img_buffer)
-        # Image optimization before sending
         max_width = 512
         if img_pil.width > max_width:
             h = int((max_width / img_pil.width) * img_pil.height)
