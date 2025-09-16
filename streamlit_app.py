@@ -83,4 +83,3 @@ with col1:
                     result = gemini_utils.identify_item(img_pil, inventory_names)
                     st.session_state.last_result = result
                     st.rerun()
-
