@@ -8,17 +8,15 @@ import base64
 def initialize_firebase():
     """
     Inicializa Firebase usando los secretos de Streamlit.
-    Ahora corrige automáticamente los errores de padding en Base64.
+    Corrige automáticamente los errores de padding en Base64.
     """
     try:
         creds_b64 = st.secrets["FIREBASE_SERVICE_ACCOUNT_BASE64"]
         
-        # --- SOLUCIÓN AL ERROR "INCORRECT PADDING" ---
-        # Esta sección revisa si a la clave le faltan caracteres de relleno y los añade.
+        # Corrige automáticamente el error "Incorrect padding"
         missing_padding = len(creds_b64) % 4
         if missing_padding:
             creds_b64 += '=' * (4 - missing_padding)
-        # --- FIN DE LA SOLUCIÓN ---
 
         creds_json = base64.b64decode(creds_b64).decode("utf-8")
         creds_dict = json.loads(creds_json)
@@ -46,4 +44,3 @@ def add_item(item_name):
     """Añade un nuevo artículo al inventario."""
     db = get_db()
     db.collection('inventory').add({'name': item_name})
-
