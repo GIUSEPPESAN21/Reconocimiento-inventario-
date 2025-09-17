@@ -2,3 +2,5 @@ streamlit
 google-generativeai
 firebase-admin
 Pillow
+opencv-python-headless
+ultralytics
