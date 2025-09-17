@@ -2,5 +2,6 @@ streamlit
 google-generativeai
 firebase-admin
 Pillow
-opencv-python-headless
+
+Ultralytics se encargará de instalar la versión correcta de OpenCV
 ultralytics
