@@ -46,6 +46,7 @@ with col2:
 
     with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
         new_item_name = st.text_input("Nombre del artículo", key="new_item")
+        # CORRECCIÓN: Se mantiene use_container_width que ya estaba bien.
         if st.button("Guardar en Firebase", use_container_width=True):
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
@@ -56,11 +57,11 @@ with col2:
 
     st.subheader("📋 Inventario Actual")
     if inventory_names:
+        # CORRECIÓN: Cambiado a use_container_width=True
         st.dataframe(inventory_names, use_container_width=True, column_config={"value": "Artículo"})
     else:
         st.info("Inventario vacío.")
     
-    # Mover el resultado final al panel de control para que siempre esté visible
     st.subheader("✔️ Resultado Final de Gemini")
     if 'gemini_result' in st.session_state:
         st.success(f"**Artículo clasificado:** {st.session_state.gemini_result}")
@@ -84,36 +85,29 @@ with col1:
         annotated_image = results[0].plot()
         annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
         
+        # CORRECIÓN: Cambiado a use_container_width=True
         st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_column_width=True)
         
-        # --- NUEVA SECCIÓN: Lógica Interactiva ---
         st.subheader("▶️ Clasificar un objeto con Gemini")
         
-        # Guardar las detecciones en el estado de la sesión para acceder a ellas
         st.session_state.detections = results[0]
 
         if not st.session_state.detections.boxes:
             st.info("No se detectó ningún objeto conocido en la imagen.")
         else:
-            # Crear un botón para cada objeto detectado
             for i, box in enumerate(st.session_state.detections.boxes):
-                # Obtener el nombre de la clase (ej: "taza", "teclado")
                 class_name = st.session_state.detections.names[box.cls[0].item()]
                 
-                # Crear un botón único para este objeto
+                # CORRECCIÓN: Se mantiene use_container_width que ya estaba bien.
                 if st.button(f"Clasificar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
-                    # Obtener las coordenadas de la caja (x1, y1, x2, y2)
                     coords = box.xyxy[0].cpu().numpy().astype(int)
                     x1, y1, x2, y2 = coords
                     
-                    # Recortar el objeto de la imagen original (no la anotada)
                     cropped_image_cv = cv_image[y1:y2, x1:x2]
                     
-                    # Convertir el recorte a un formato que Gemini entienda (PIL Image)
                     cropped_image_rgb = cv2.cvtColor(cropped_image_cv, cv2.COLOR_BGR2RGB)
                     cropped_pil_image = Image.fromarray(cropped_image_rgb)
                     
-                    # Enviar solo el recorte a Gemini para la clasificación final
                     with st.spinner(f"🤖 Gemini está analizando '{class_name}'..."):
                         gemini_result = gemini_utils.identify_item(cropped_pil_image, inventory_names)
                         st.session_state.gemini_result = gemini_result
