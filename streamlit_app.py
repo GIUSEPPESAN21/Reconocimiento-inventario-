@@ -14,7 +14,6 @@ st.set_page_config(
 )
 
 # --- CARGA DE MODELOS Y CONEXIONES ---
-
 @st.cache_resource
 def load_yolo_model():
     """Carga el modelo YOLO pre-entrenado una sola vez."""
@@ -45,9 +44,9 @@ with col2:
     inventory_names = [item.get('name') for item in inventory_list]
 
     with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
-        # --- CORRECCIÓN ---
-        # Se cambió la clave de "new_item" a "new_item_input" para garantizar que sea única.
-        new_item_name = st.text_input("Nombre del artículo", key="new_item_input")
+        # --- CORRECCIÓN DEL ERROR ---
+        # Se cambió la clave de "new_item" a "add_item_input" para resolver el error de clave duplicada.
+        new_item_name = st.text_input("Nombre del artículo", key="add_item_input")
         if st.button("Guardar en Firebase", use_container_width=True):
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
                 firebase_utils.add_item(new_item_name.strip())
