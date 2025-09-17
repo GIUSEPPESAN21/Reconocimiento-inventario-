@@ -2,7 +2,7 @@ import streamlit as st
 from PIL import Image
 import firebase_utils
 import gemini_utils
-import cv2  # Importamos OpenCV para dibujar sobre la imagen
+import cv2
 import numpy as np
 from ultralytics import YOLO
 
@@ -13,19 +13,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CARGA DE MODELOS Y CONEXIONES (Una sola vez) ---
+# --- CARGA DE MODELOS Y CONEXIONES ---
 
 @st.cache_resource
 def load_yolo_model():
     """Carga el modelo YOLO pre-entrenado una sola vez."""
-    # 'yolov8n.pt' es un modelo pequeño y rápido, ideal para empezar.
     model = YOLO('yolov8n.pt')
     return model
 
 try:
-    # Cargamos el modelo YOLO al iniciar la app
     yolo_model = load_yolo_model()
-    # Inicializamos Firebase
     firebase_utils.initialize_firebase()
 except Exception as e:
     st.error(f"**Error Crítico de Inicialización.** No se pudo cargar un modelo o conectar a la base de datos.")
@@ -62,6 +59,14 @@ with col2:
         st.dataframe(inventory_names, use_container_width=True, column_config={"value": "Artículo"})
     else:
         st.info("Inventario vacío.")
+    
+    # Mover el resultado final al panel de control para que siempre esté visible
+    st.subheader("✔️ Resultado Final de Gemini")
+    if 'gemini_result' in st.session_state:
+        st.success(f"**Artículo clasificado:** {st.session_state.gemini_result}")
+    else:
+        st.info("Selecciona un objeto detectado para clasificarlo.")
+
 
 # --- CAPTURA Y ANÁLISIS (COLUMNA 1) ---
 with col1:
@@ -69,23 +74,48 @@ with col1:
     img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera")
 
     if img_buffer:
-        # Convertir el buffer de la imagen a un formato que OpenCV pueda usar
         bytes_data = img_buffer.getvalue()
         cv_image = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
         
-        # Realizar la detección de objetos con YOLO
         with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
             results = yolo_model(cv_image)
 
         st.subheader("🔍 Objetos Detectados")
-        
-        # Dibujar las cajas delimitadoras y etiquetas sobre la imagen
-        annotated_image = results[0].plot() # El método .plot() de ultralytics hace esto automáticamente!
-
-        # Convertir la imagen de vuelta a un formato que Streamlit pueda mostrar (BGR a RGB)
+        annotated_image = results[0].plot()
         annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
         
         st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_column_width=True)
         
-        # (Próximo paso será hacer estas detecciones interactivas)
+        # --- NUEVA SECCIÓN: Lógica Interactiva ---
+        st.subheader("▶️ Clasificar un objeto con Gemini")
+        
+        # Guardar las detecciones en el estado de la sesión para acceder a ellas
+        st.session_state.detections = results[0]
+
+        if not st.session_state.detections.boxes:
+            st.info("No se detectó ningún objeto conocido en la imagen.")
+        else:
+            # Crear un botón para cada objeto detectado
+            for i, box in enumerate(st.session_state.detections.boxes):
+                # Obtener el nombre de la clase (ej: "taza", "teclado")
+                class_name = st.session_state.detections.names[box.cls[0].item()]
+                
+                # Crear un botón único para este objeto
+                if st.button(f"Clasificar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
+                    # Obtener las coordenadas de la caja (x1, y1, x2, y2)
+                    coords = box.xyxy[0].cpu().numpy().astype(int)
+                    x1, y1, x2, y2 = coords
+                    
+                    # Recortar el objeto de la imagen original (no la anotada)
+                    cropped_image_cv = cv_image[y1:y2, x1:x2]
+                    
+                    # Convertir el recorte a un formato que Gemini entienda (PIL Image)
+                    cropped_image_rgb = cv2.cvtColor(cropped_image_cv, cv2.COLOR_BGR2RGB)
+                    cropped_pil_image = Image.fromarray(cropped_image_rgb)
+                    
+                    # Enviar solo el recorte a Gemini para la clasificación final
+                    with st.spinner(f"🤖 Gemini está analizando '{class_name}'..."):
+                        gemini_result = gemini_utils.identify_item(cropped_pil_image, inventory_names)
+                        st.session_state.gemini_result = gemini_result
+                        st.rerun()
 
