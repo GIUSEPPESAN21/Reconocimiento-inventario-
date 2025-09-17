@@ -2,6 +2,7 @@ streamlit
 google-generativeai
 firebase-admin
 Pillow
-
-Ultralytics se encargará de instalar la versión correcta de OpenCV
+opencv-python-headless
+torch
+torchvision
 ultralytics
