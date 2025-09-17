@@ -4,8 +4,8 @@ import streamlit as st
 
 def get_image_attributes(image: Image.Image):
     """
-    Usa Gemini para extraer una lista detallada de atributos de la imagen de un objeto.
-    Solicita la respuesta en formato JSON.
+    Usa Gemini para extraer una lista detallada de atributos de la imagen de un objeto,
+    solicitando la respuesta en formato JSON para un análisis más preciso.
     """
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
@@ -14,16 +14,16 @@ def get_image_attributes(image: Image.Image):
 
     genai.configure(api_key=api_key)
 
-    # Prompt mucho más avanzado que pide un análisis detallado y una salida en JSON.
+    # Prompt avanzado que fuerza a Gemini a analizar atributos antes de decidir.
     prompt = """
     Analiza la imagen de este objeto y proporciona sus atributos. Responde únicamente con un objeto JSON válido.
     El objeto JSON debe tener las siguientes claves:
     - "main_object": (string) El nombre genérico del objeto principal (ej: "taza", "teclado", "destornillador").
     - "main_color": (string) El color dominante del objeto.
     - "secondary_colors": (array of strings) Una lista de otros colores significativos presentes.
-    - "shape": (string) Una breve descripción de la forma principal del objeto (ej: "cilíndrica", "rectangular", "ergonómica").
-    - "material": (string) Tu mejor suposición sobre el material principal (ej: "plástico", "metal", "cerámica", "madera").
-    - "features": (array of strings) Una lista de características visuales notables (ej: "tiene un asa", "con logo circular", "teclas negras", "punta de estrella").
+    - "shape": (string) Una breve descripción de la forma principal (ej: "cilíndrica", "rectangular").
+    - "material": (string) Tu mejor suposición sobre el material principal (ej: "plástico", "metal", "cerámica").
+    - "features": (array of strings) Una lista de características visuales notables (ej: "tiene un asa", "con logo", "teclas negras").
 
     Ejemplo de respuesta para una taza de café blanca:
     ```json
@@ -36,7 +36,7 @@ def get_image_attributes(image: Image.Image):
       "features": ["tiene un asa", "interior oscuro"]
     }
     ```
-    Ahora, analiza la imagen que te proporciono.
+    Ahora, analiza la imagen que te proporciono y devuelve solo el JSON.
     """
 
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
@@ -45,6 +45,6 @@ def get_image_attributes(image: Image.Image):
         response = model.generate_content([prompt, image])
         return response.text
     except Exception as e:
-        # Devuelve un JSON de error si la API falla
+        # Devuelve un JSON de error si la API falla, para mantener la consistencia.
         return f'{{"error": "Error al contactar la API de Gemini: {e}"}}'
 
