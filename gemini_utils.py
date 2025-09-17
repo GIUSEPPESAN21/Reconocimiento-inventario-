@@ -29,3 +29,4 @@ def identify_item(image: Image.Image, inventory_list: list):
         return response.text.strip()
     except Exception as e:
         return f"Error al contactar la API de Gemini: {e}"
+
