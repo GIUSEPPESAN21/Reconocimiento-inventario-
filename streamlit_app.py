@@ -10,7 +10,7 @@ from collections import Counter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Inventario Inteligente Avanzado",
+    page_title="Inventario Inteligente Experto",
     page_icon="🧠",
     layout="wide"
 )
@@ -18,8 +18,8 @@ st.set_page_config(
 # --- CARGA DE MODELOS Y CONEXIONES ---
 @st.cache_resource
 def load_yolo_model():
-    """Carga un modelo YOLO más potente para una mejor detección."""
-    model = YOLO('yolov8m.pt')
+    """Carga un modelo YOLO potente para una mejor detección."""
+    model = YOLO('yolov8m.pt') # Modelo mediano para un buen balance de velocidad/precisión
     return model
 
 try:
@@ -30,43 +30,9 @@ except Exception as e:
     st.code(f"Detalle del error: {e}", language="bash")
     st.stop()
 
-# --- FUNCIONES DE LÓGICA ---
-def find_best_match(attributes, inventory_names):
-    """
-    Compara los atributos extraídos por Gemini con la lista de inventario.
-    Devuelve el artículo del inventario con la mayor cantidad de coincidencias de palabras clave.
-    """
-    if not inventory_names:
-        return "Artículo no encontrado"
-
-    best_match = "Artículo no encontrado"
-    max_score = 0
-
-    attribute_text = (
-        f"{attributes.get('main_object', '')} "
-        f"{attributes.get('main_color', '')} "
-        f"{' '.join(attributes.get('secondary_colors', []))} "
-        f"{attributes.get('shape', '')} "
-        f"{attributes.get('material', '')} "
-        f"{' '.join(attributes.get('features', []))}"
-    ).lower()
-
-    for name in inventory_names:
-        score = 0
-        for word in name.lower().split():
-            if word in attribute_text:
-                score += 1
-        
-        if score > max_score:
-            max_score = score
-            best_match = name
-    
-    # Se requiere un mínimo de 2 coincidencias para considerarlo un match válido
-    return best_match if max_score >= 2 else "Artículo no encontrado"
-
 # --- TÍTULO Y DESCRIPCIÓN ---
-st.title("🧠 Inventario Inteligente Avanzado")
-st.markdown("Sistema híbrido con **YOLO** para detección y **Gemini** para análisis detallado de atributos.")
+st.title("🧠 Inventario Inteligente Experto")
+st.markdown("Sistema de doble análisis: **YOLO** detecta, **Gemini-Visión** extrae atributos y **Gemini-Lógico** razona la mejor coincidencia.")
 
 # --- ESTRUCTURA DE LA INTERFAZ ---
 col1, col2 = st.columns([2, 1])
@@ -79,7 +45,7 @@ with col2:
     
     inventory_names = [item.get('name') for item in inventory_list]
 
-    with st.expander("➕ Añadir Nuevo Artículo Manualmente", expanded=True):
+    with st.expander("➕ Añadir Artículo Manualmente", expanded=True):
         new_item_name = st.text_input("Nombre del artículo", key="add_item_input")
         if st.button("Guardar en Firebase", use_container_width=True):
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
@@ -99,39 +65,29 @@ with col2:
     if 'analysis_result' in st.session_state:
         result = st.session_state.analysis_result
         
-        # --- LÓGICA DE REGISTRO PARA NUEVOS ARTÍCULOS ---
-        if result['best_match'] == "Artículo no encontrado":
-            st.warning("Este objeto no está registrado en tu inventario.")
-            attributes = result['attributes']
-            
-            # Crear un nombre sugerido a partir de los atributos
-            suggested_name = f"{attributes.get('main_color', '')} {attributes.get('main_object', '')} {attributes.get('features', [''])[0]}".strip().capitalize()
-            
-            with st.expander("Registrar Nuevo Artículo", expanded=True):
-                st.write("Gemini ha extraído los siguientes atributos:")
+        if result.get('best_match') == "Artículo no encontrado":
+            st.warning("Este objeto no parece coincidir con nada en tu inventario.")
+            with st.expander("Registrar como Nuevo Artículo", expanded=True):
+                attributes = result.get('attributes', {})
+                st.write("Atributos detectados por la IA:")
                 st.json(attributes)
                 
-                new_item_suggestion = st.text_input(
-                    "Nombre sugerido para el nuevo artículo:", 
-                    value=suggested_name,
-                    key="new_item_suggestion"
-                )
+                suggested_name = f"{attributes.get('main_color', '')} {attributes.get('main_object', '')} {attributes.get('features', [''])[0]}".strip().capitalize()
                 
+                new_item_suggestion = st.text_input("Nombre para el nuevo artículo:", value=suggested_name)
                 if st.button("✅ Registrar este artículo", use_container_width=True):
                     if new_item_suggestion and new_item_suggestion.strip():
                         firebase_utils.add_item(new_item_suggestion.strip())
                         st.success(f"'{new_item_suggestion}' ha sido registrado.")
-                        del st.session_state['analysis_result'] # Limpiar estado
+                        del st.session_state['analysis_result']
                         st.rerun()
-                    else:
-                        st.error("El nombre no puede estar vacío.")
-
         else:
-            st.success(f"**Mejor Coincidencia:** {result['best_match']}")
+            st.success(f"**Mejor Coincidencia:** {result.get('best_match')}")
+            st.info(f"**Razón de la IA:** {result.get('reasoning')}")
             with st.expander("Ver atributos detallados"):
-                st.json(result['attributes'])
+                st.json(result.get('attributes', {}))
     else:
-        st.info("Selecciona un objeto detectado para analizarlo.")
+        st.info("Selecciona un objeto para analizarlo.")
 
 # --- CAPTURA Y ANÁLISIS (COLUMNA 1) ---
 with col1:
@@ -152,7 +108,6 @@ with col1:
         st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_container_width=True)
         
         detections = results[0]
-        st.session_state.detections = detections
         
         if detections.boxes:
             detected_classes = [detections.names[c] for c in detections.boxes.cls.tolist()]
@@ -176,23 +131,33 @@ with col1:
                     cropped_image_rgb = cv2.cvtColor(cropped_image_cv, cv2.COLOR_BGR2RGB)
                     cropped_pil_image = Image.fromarray(cropped_image_rgb)
                     
-                    st.image(cropped_pil_image, caption=f"Enviando este recorte a Gemini...")
+                    st.image(cropped_pil_image, caption=f"Recorte enviado para análisis...")
 
-                    with st.spinner(f"🤖 Gemini está extrayendo atributos..."):
+                    # --- FLUJO DE DOBLE ANÁLISIS ---
+                    with st.spinner(f"🤖 Paso 1: Extrayendo atributos de '{class_name}'..."):
                         attributes_str = gemini_utils.get_image_attributes(cropped_pil_image)
-                        try:
-                            clean_json_str = attributes_str.strip().replace("```json", "").replace("```", "")
-                            attributes = json.loads(clean_json_str)
-                            best_match = find_best_match(attributes, inventory_names)
-                            
-                            st.session_state.analysis_result = {
-                                "attributes": attributes,
-                                "best_match": best_match
-                            }
-                        except (json.JSONDecodeError, KeyError):
-                            st.session_state.analysis_result = {
-                                "attributes": {"error": "No se pudo interpretar la respuesta de Gemini.", "raw_response": attributes_str},
-                                "best_match": "Artículo no encontrado" # Forzar el flujo de registro
-                            }
-                        st.rerun()
+                    
+                    try:
+                        clean_json_str = attributes_str.strip().replace("```json", "").replace("```", "")
+                        attributes = json.loads(clean_json_str)
+                        
+                        with st.spinner("🤖 Paso 2: Razonando la mejor coincidencia..."):
+                            match_str = gemini_utils.get_best_match_from_attributes(attributes, inventory_names)
+                        
+                        clean_match_str = match_str.strip().replace("```json", "").replace("```", "")
+                        match_data = json.loads(clean_match_str)
+                        
+                        st.session_state.analysis_result = {
+                            "attributes": attributes,
+                            "best_match": match_data.get("best_match", "Error"),
+                            "reasoning": match_data.get("reasoning", "No se proporcionó una razón.")
+                        }
+
+                    except (json.JSONDecodeError, KeyError) as e:
+                        st.session_state.analysis_result = {
+                            "attributes": {"error": "No se pudo interpretar la respuesta de la IA.", "raw_response": attributes_str},
+                            "best_match": "Artículo no encontrado",
+                            "reasoning": f"Error de formato: {e}"
+                        }
+                    st.rerun()
 
