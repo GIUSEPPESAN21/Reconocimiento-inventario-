@@ -19,7 +19,6 @@ st.set_page_config(
 @st.cache_resource
 def load_yolo_model():
     """Carga un modelo YOLO más potente para una mejor detección."""
-    # Usamos el modelo 'medium' (m) para mayor precisión.
     model = YOLO('yolov8m.pt')
     return model
 
@@ -38,12 +37,11 @@ def find_best_match(attributes, inventory_names):
     Devuelve el artículo del inventario con la mayor cantidad de coincidencias de palabras clave.
     """
     if not inventory_names:
-        return "Inventario vacío."
+        return "Artículo no encontrado"
 
     best_match = "Artículo no encontrado"
     max_score = 0
 
-    # Construir una cadena de texto unificada con todos los atributos detectados
     attribute_text = (
         f"{attributes.get('main_object', '')} "
         f"{attributes.get('main_color', '')} "
@@ -53,24 +51,22 @@ def find_best_match(attributes, inventory_names):
         f"{' '.join(attributes.get('features', []))}"
     ).lower()
 
-    # Iterar sobre cada artículo en nuestro inventario de Firebase
     for name in inventory_names:
         score = 0
-        # Calcular la puntuación de coincidencia
         for word in name.lower().split():
             if word in attribute_text:
                 score += 1
         
-        # Actualizar si encontramos una mejor coincidencia
         if score > max_score:
             max_score = score
             best_match = name
-
-    return best_match
+    
+    # Se requiere un mínimo de 2 coincidencias para considerarlo un match válido
+    return best_match if max_score >= 2 else "Artículo no encontrado"
 
 # --- TÍTULO Y DESCRIPCIÓN ---
 st.title("🧠 Inventario Inteligente Avanzado")
-st.markdown("Sistema híbrido con **YOLO** para detección/conteo y **Gemini** para análisis detallado de atributos.")
+st.markdown("Sistema híbrido con **YOLO** para detección y **Gemini** para análisis detallado de atributos.")
 
 # --- ESTRUCTURA DE LA INTERFAZ ---
 col1, col2 = st.columns([2, 1])
@@ -83,7 +79,7 @@ with col2:
     
     inventory_names = [item.get('name') for item in inventory_list]
 
-    with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
+    with st.expander("➕ Añadir Nuevo Artículo Manualmente", expanded=True):
         new_item_name = st.text_input("Nombre del artículo", key="add_item_input")
         if st.button("Guardar en Firebase", use_container_width=True):
             if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
@@ -102,9 +98,38 @@ with col2:
     st.subheader("✔️ Resultado del Análisis")
     if 'analysis_result' in st.session_state:
         result = st.session_state.analysis_result
-        st.success(f"**Mejor Coincidencia:** {result['best_match']}")
-        with st.expander("Ver atributos detallados extraídos por Gemini"):
-            st.json(result['attributes'])
+        
+        # --- LÓGICA DE REGISTRO PARA NUEVOS ARTÍCULOS ---
+        if result['best_match'] == "Artículo no encontrado":
+            st.warning("Este objeto no está registrado en tu inventario.")
+            attributes = result['attributes']
+            
+            # Crear un nombre sugerido a partir de los atributos
+            suggested_name = f"{attributes.get('main_color', '')} {attributes.get('main_object', '')} {attributes.get('features', [''])[0]}".strip().capitalize()
+            
+            with st.expander("Registrar Nuevo Artículo", expanded=True):
+                st.write("Gemini ha extraído los siguientes atributos:")
+                st.json(attributes)
+                
+                new_item_suggestion = st.text_input(
+                    "Nombre sugerido para el nuevo artículo:", 
+                    value=suggested_name,
+                    key="new_item_suggestion"
+                )
+                
+                if st.button("✅ Registrar este artículo", use_container_width=True):
+                    if new_item_suggestion and new_item_suggestion.strip():
+                        firebase_utils.add_item(new_item_suggestion.strip())
+                        st.success(f"'{new_item_suggestion}' ha sido registrado.")
+                        del st.session_state['analysis_result'] # Limpiar estado
+                        st.rerun()
+                    else:
+                        st.error("El nombre no puede estar vacío.")
+
+        else:
+            st.success(f"**Mejor Coincidencia:** {result['best_match']}")
+            with st.expander("Ver atributos detallados"):
+                st.json(result['attributes'])
     else:
         st.info("Selecciona un objeto detectado para analizarlo.")
 
@@ -129,7 +154,6 @@ with col1:
         detections = results[0]
         st.session_state.detections = detections
         
-        # Conteo de objetos detectados
         if detections.boxes:
             detected_classes = [detections.names[c] for c in detections.boxes.cls.tolist()]
             counts = Counter(detected_classes)
@@ -152,7 +176,7 @@ with col1:
                     cropped_image_rgb = cv2.cvtColor(cropped_image_cv, cv2.COLOR_BGR2RGB)
                     cropped_pil_image = Image.fromarray(cropped_image_rgb)
                     
-                    st.image(cropped_pil_image, caption=f"Enviando este recorte de '{class_name}' a Gemini...")
+                    st.image(cropped_pil_image, caption=f"Enviando este recorte a Gemini...")
 
                     with st.spinner(f"🤖 Gemini está extrayendo atributos..."):
                         attributes_str = gemini_utils.get_image_attributes(cropped_pil_image)
@@ -165,10 +189,10 @@ with col1:
                                 "attributes": attributes,
                                 "best_match": best_match
                             }
-                        except (json.JSONDecodeError, KeyError) as e:
+                        except (json.JSONDecodeError, KeyError):
                             st.session_state.analysis_result = {
                                 "attributes": {"error": "No se pudo interpretar la respuesta de Gemini.", "raw_response": attributes_str},
-                                "best_match": "Error de análisis"
+                                "best_match": "Artículo no encontrado" # Forzar el flujo de registro
                             }
                         st.rerun()
 
