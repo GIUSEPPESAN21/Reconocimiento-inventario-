@@ -5,13 +5,11 @@ import gemini_utils
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import json
-from collections import Counter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Inventario Inteligente Avanzado",
-    page_icon="🧠",
+    page_title="Inventario Inteligente Híbrido",
+    page_icon="🤖",
     layout="wide"
 )
 
@@ -19,8 +17,7 @@ st.set_page_config(
 @st.cache_resource
 def load_yolo_model():
     """Carga el modelo YOLO pre-entrenado una sola vez."""
-    # Usamos un modelo más grande para mayor precisión: 'yolov8m.pt' (medium)
-    model = YOLO('yolov8m.pt')
+    model = YOLO('yolov8n.pt')
     return model
 
 try:
@@ -31,44 +28,9 @@ except Exception as e:
     st.code(f"Detalle del error: {e}", language="bash")
     st.stop()
 
-# --- FUNCIONES AUXILIARES ---
-def find_best_match(attributes, inventory_names):
-    """
-    Compara los atributos extraídos por Gemini con la lista de inventario.
-    Devuelve el artículo del inventario con la mayor cantidad de coincidencias.
-    """
-    if not inventory_names:
-        return "Inventario vacío."
-
-    best_match = None
-    max_score = 0
-
-    # Crear una cadena de texto con todos los atributos detectados
-    attribute_text = (
-        f"{attributes.get('main_object', '')} "
-        f"{attributes.get('main_color', '')} "
-        f"{' '.join(attributes.get('secondary_colors', []))} "
-        f"{attributes.get('shape', '')} "
-        f"{attributes.get('material', '')} "
-        f"{' '.join(attributes.get('features', []))}"
-    ).lower()
-
-    for name in inventory_names:
-        score = 0
-        # Contar cuántas palabras del nombre del inventario están en los atributos
-        for word in name.lower().split():
-            if word in attribute_text:
-                score += 1
-        
-        if score > max_score:
-            max_score = score
-            best_match = name
-
-    return best_match if max_score > 0 else "Artículo no encontrado"
-
 # --- TÍTULO Y DESCRIPCIÓN ---
-st.title("🧠 Inventario Inteligente Avanzado")
-st.markdown("Sistema híbrido con **YOLO** para detección y conteo, y **Gemini** para análisis de atributos y clasificación.")
+st.title("📦 Inventario Inteligente Híbrido (IA Local + Cloud)")
+st.markdown("Usa **YOLO** para detectar objetos localmente y **Gemini** para una clasificación detallada.")
 
 # --- ESTRUCTURA ---
 col1, col2 = st.columns([2, 1])
@@ -97,85 +59,54 @@ with col2:
     else:
         st.info("Inventario vacío.")
     
-    st.subheader("✔️ Resultado del Análisis")
-    if 'analysis_result' in st.session_state:
-        result = st.session_state.analysis_result
-        st.success(f"**Mejor Coincidencia:** {result['best_match']}")
-        with st.expander("Ver atributos detallados extraídos por Gemini"):
-            st.json(result['attributes'])
+    st.subheader("✔️ Resultado Final de Gemini")
+    if 'gemini_result' in st.session_state:
+        st.success(f"**Artículo clasificado:** {st.session_state.gemini_result}")
     else:
-        st.info("Selecciona un objeto detectado para analizarlo.")
+        st.info("Selecciona un objeto detectado para clasificarlo.")
+
 
 # --- CAPTURA Y ANÁLISIS (COLUMNA 1) ---
 with col1:
-    st.header("📷 Captura y Detección")
+    st.header("📷 Captura y Detección Local")
     img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera")
 
     if img_buffer:
         bytes_data = img_buffer.getvalue()
         cv_image = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
         
-        with st.spinner("🧠 Detectando objetos y contando..."):
+        with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
             results = yolo_model(cv_image)
 
         st.subheader("🔍 Objetos Detectados")
         annotated_image = results[0].plot()
         annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
         
-        st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_column_width=True)
+        # --- CORRECCIÓN DEL WARNING ---
+        # Se cambió 'use_column_width=True' por 'use_container_width=True'
+        st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_container_width=True)
         
-        detections = results[0]
-        st.session_state.detections = detections
+        st.subheader("▶️ Clasificar un objeto con Gemini")
         
-        # --- NUEVO: Conteo de objetos ---
-        if detections.boxes:
-            detected_classes = [detections.names[c] for c in detections.boxes.cls.tolist()]
-            counts = Counter(detected_classes)
-            st.write("**Conteo de Objetos Detectados:**")
-            st.table(counts)
+        st.session_state.detections = results[0]
 
-        st.subheader("▶️ Analizar un objeto en detalle")
-        
-        if not detections.boxes:
+        if not st.session_state.detections.boxes:
             st.info("No se detectó ningún objeto conocido en la imagen.")
         else:
-            for i, box in enumerate(detections.boxes):
-                class_name = detections.names[box.cls[0].item()]
+            for i, box in enumerate(st.session_state.detections.boxes):
+                class_name = st.session_state.detections.names[box.cls[0].item()]
                 
-                if st.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
+                if st.button(f"Clasificar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
                     coords = box.xyxy[0].cpu().numpy().astype(int)
                     x1, y1, x2, y2 = coords
                     
                     cropped_image_cv = cv_image[y1:y2, x1:x2]
+                    
                     cropped_image_rgb = cv2.cvtColor(cropped_image_cv, cv2.COLOR_BGR2RGB)
                     cropped_pil_image = Image.fromarray(cropped_image_rgb)
                     
-                    st.image(cropped_pil_image, caption=f"Enviando este recorte a Gemini...")
-
-                    with st.spinner(f"🤖 Gemini está extrayendo atributos de '{class_name}'..."):
-                        # Nueva función que devuelve un JSON
-                        attributes_str = gemini_utils.get_image_attributes(cropped_pil_image)
-                        try:
-                            # Limpiar la respuesta para que sea un JSON válido
-                            clean_json_str = attributes_str.strip().replace("```json", "").replace("```", "")
-                            attributes = json.loads(clean_json_str)
-                            
-                            # Realizar la coincidencia inteligente
-                            best_match = find_best_match(attributes, inventory_names)
-                            
-                            st.session_state.analysis_result = {
-                                "attributes": attributes,
-                                "best_match": best_match
-                            }
-                        except json.JSONDecodeError:
-                            st.session_state.analysis_result = {
-                                "attributes": {"error": "No se pudo interpretar la respuesta de Gemini."},
-                                "best_match": "Error de análisis"
-                            }
-                        except Exception as e:
-                            st.session_state.analysis_result = {
-                                "attributes": {"error": str(e)},
-                                "best_match": "Error inesperado"
-                            }
+                    with st.spinner(f"🤖 Gemini está analizando '{class_name}'..."):
+                        gemini_result = gemini_utils.identify_item(cropped_pil_image, inventory_names)
+                        st.session_state.gemini_result = gemini_result
                         st.rerun()
 
