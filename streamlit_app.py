@@ -173,11 +173,11 @@ with tab_acerca_de:
             st.image("https://placehold.co/250x250/2B3137/FFFFFF?text=J.M.", caption="Jhon Alejandro Mojica")
         
         with col_info_prof:
-            st.title("Jhon Alejandro Mojica")
-            st.subheader("_Profesor y Tutor del Proyecto_")
+            st.title("Xammy Alexander Victoria Gonzalez")
+            st.subheader("Profesor Tiempo Completo")
             st.markdown(
                 """
-                - 📧 **Email:** [jhon.mojica@uniminuto.edu.co](mailto:jhon.mojica@uniminuto.edu.co)
+                - 📧 **Email:** [xammy.victoria@uniminuto.edu.co](mailto:xammy.victoria@uniminuto.edu.co)
                 """
             )
 
