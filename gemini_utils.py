@@ -9,22 +9,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def _call_gemini_with_fallback(prompt, image=None):
     """
-    Función interna para llamar a la API de Gemini con una lista de modelos y fallback automático.
-    Esta función centraliza la lógica de conexión para evitar duplicar código.
+    Función interna para llamar a la API de Gemini con una lista de modelos, 
+    fallback automático y registro de errores detallado.
     """
+    last_error = None
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=api_key)
     except KeyError:
         error_msg = "La clave GEMINI_API_KEY no está configurada en los secretos de Streamlit."
         logging.error(error_msg)
-        return f'{{"error": "{error_msg}"}}'
+        return json.dumps({"error": error_msg})
 
-    # --- CONFIGURACIÓN OPTIMIZADA (BASADA EN LA SOLUCIÓN PROPORCIONADA) ---
     generation_config = {
         "temperature": 0.4,
-        "top_p": 0.95,
-        "top_k": 40,
+        "top_p": 1.0,
+        "top_k": 32,
         "max_output_tokens": 4096,
     }
     safety_settings = [
@@ -34,15 +34,12 @@ def _call_gemini_with_fallback(prompt, image=None):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_UP"},
     ]
     
-    # --- LISTA DE MODELOS ACTUALIZADA CON FALLBACK (CORRECCIÓN DEL ERROR 404) ---
-    # Se intentará usar los modelos en este orden. Si uno falla, prueba con el siguiente.
+    # Lista de modelos refinada para estabilidad. Flash es rápido, Pro es un buen respaldo.
     model_list = [
-        "gemini-1.5-flash-001", # Modelo más reciente y rápido
-        "gemini-1.5-pro-latest",   # Modelo pro más estable
-        "gemini-1.0-pro",       # Modelo base como último recurso
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-pro-latest",
     ]
 
-    # Contenido a enviar al modelo
     content = [prompt, image] if image else [prompt]
 
     for model_name in model_list:
@@ -58,25 +55,30 @@ def _call_gemini_with_fallback(prompt, image=None):
             if response.parts:
                 logging.info(f"Respuesta exitosa usando el modelo: {model_name}")
                 return response.text
-            elif hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                block_reason = response.prompt_feedback.block_reason
-                logging.warning(f"Modelo {model_name} bloqueó la respuesta: {block_reason}. Intentando con el siguiente modelo.")
-                continue # Intenta con el siguiente modelo de la lista
-        
-        except Exception as e:
-            logging.warning(f"Error con el modelo {model_name}: {e}. Intentando con el siguiente modelo.")
-            continue # Intenta con el siguiente modelo
+            
+            # Guardar la razón del bloqueo si la respuesta fue bloqueada
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                last_error = f"Modelo {model_name} bloqueó la respuesta: {response.prompt_feedback.block_reason}"
+                logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
+            else:
+                last_error = f"El modelo {model_name} no devolvió contenido."
+                logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
 
-    # Si todos los modelos fallan
-    final_error_msg = "Todos los modelos de Gemini fallaron o no están disponibles."
+        except Exception as e:
+            # --- MEJORA CLAVE: Registrar el error específico ---
+            last_error = f"Error de API con el modelo {model_name}: {e}"
+            logging.error(f"{last_error}. Intentando con el siguiente modelo.")
+            continue
+
+    # Si todos los modelos fallan, devolver el último error conocido
+    final_error_msg = f"No se pudo conectar con ningún modelo de IA disponible. Último error: {last_error}"
     logging.error(final_error_msg)
-    return f'{{"error": "{final_error_msg}"}}'
+    return json.dumps({"error": final_error_msg})
 
 
 def get_image_attributes(image: Image.Image):
     """
-    Paso 1: Actúa como el "Ojo". Extrae atributos visuales de la imagen y los devuelve en formato JSON.
-    Utiliza la nueva función con fallback.
+    Paso 1: Actúa como el "Ojo". Extrae atributos visuales de la imagen.
     """
     prompt = """
     Analiza la imagen de este objeto y proporciona sus atributos. Responde únicamente con un objeto JSON válido.
@@ -94,11 +96,10 @@ def get_image_attributes(image: Image.Image):
 
 def get_best_match_from_attributes(attributes: dict, inventory_names: list):
     """
-    Paso 2: Actúa como el "Cerebro Logístico". Recibe los atributos y la lista del inventario,
-    y razona cuál es la mejor coincidencia. Utiliza la nueva función con fallback.
+    Paso 2: Actúa como el "Cerebro Logístico". Encuentra la mejor coincidencia en el inventario.
     """
     if not inventory_names:
-        return '{"best_match": "Artículo no encontrado", "reasoning": "El inventario está vacío."}'
+        return json.dumps({"best_match": "Artículo no encontrado", "reasoning": "El inventario está vacío."})
         
     attributes_json_string = json.dumps(attributes, indent=2)
 
@@ -116,16 +117,8 @@ def get_best_match_from_attributes(attributes: dict, inventory_names: list):
     Basado en los atributos observados, ¿cuál de los artículos de mi lista de inventario es la coincidencia más probable?
     
     Responde únicamente con un objeto JSON válido que contenga dos claves:
-    1. "best_match": (string) El nombre exacto del artículo de la lista que mejor coincide. Si ninguna coincidencia es buena, usa la cadena "Artículo no encontrado".
+    1. "best_match": (string) El nombre exacto del artículo de la lista. Si no hay coincidencia, usa "Artículo no encontrado".
     2. "reasoning": (string) Una frase corta explicando tu elección.
-    
-    Ejemplo de respuesta:
-    ```json
-    {{
-      "best_match": "Taza de cerámica blanca con asa",
-      "reasoning": "El objeto es una taza blanca de cerámica con un asa, lo que coincide perfectamente con este artículo del inventario."
-    }}
-    ```
-    Ahora, proporciona tu análisis.
     """
     return _call_gemini_with_fallback(prompt)
+
