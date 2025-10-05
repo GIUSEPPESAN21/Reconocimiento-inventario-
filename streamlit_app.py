@@ -1,312 +1,250 @@
 import streamlit as st
 import logging
-from gemini_utils import GeminiUtils, get_gemini_response
+from gemini_utils import _call_gemini_with_fallback # Usamos la función corregida directamente
 from firebase_utils import FirebaseUtils
 from PIL import Image
 import io
 import pandas as pd
+import json
+from ultralytics import YOLO
+import cv2
+import numpy as np
+from collections import Counter
 
-# Configurar logging
+# --- CONFIGURACIÓN DE LOGGING ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log'),
-        logging.StreamHandler()
-    ]
 )
-
 logger = logging.getLogger(__name__)
 
+# --- CARGA DE MODELOS Y CONEXIONES ---
+@st.cache_resource
+def load_yolo_model():
+    """Carga el modelo YOLO pre-entrenado una sola vez."""
+    try:
+        model = YOLO('yolov8m.pt')
+        return model
+    except Exception as e:
+        logger.error(f"Error cargando el modelo YOLO: {e}")
+        st.error(f"No se pudo cargar el modelo de detección de objetos. La aplicación no puede continuar. Error: {e}")
+        st.stop()
+
+@st.cache_resource
+def initialize_firebase_connection():
+    """Inicializa la conexión con Firebase una sola vez."""
+    try:
+        firebase = FirebaseUtils()
+        logger.info("Conexión con Firebase establecida correctamente.")
+        return firebase
+    except Exception as e:
+        logger.error(f"Error crítico al conectar con Firebase: {e}")
+        st.error(f"No se pudo conectar a la base de datos. Verifique los secretos de Streamlit. Error: {e}")
+        st.stop()
+
+# --- FUNCIÓN PRINCIPAL DE LA APP ---
 def main():
     st.set_page_config(
-        page_title="Sistema de Reconocimiento de Inventario",
+        page_title="Inventario Inteligente Experto",
         page_icon="📦",
         layout="wide"
     )
     
     st.title("🤖 Sistema de Reconocimiento de Inventario con IA")
     st.markdown("---")
-    
-    # Verificar que los secrets estén configurados
+
+    # --- VERIFICACIÓN DE SECRETS Y CONEXIONES ---
     try:
-        # Verificar GEMINI_API_KEY
-        gemini_key = st.secrets["GEMINI_API_KEY"]
-        if not gemini_key:
-            st.error("❌ GEMINI_API_KEY no configurada en Streamlit secrets")
-            return
-        
-        # Verificar FIREBASE_SERVICE_ACCOUNT_BASE64
-        firebase_secret = st.secrets["FIREBASE_SERVICE_ACCOUNT_BASE64"]
-        if not firebase_secret:
-            st.error("❌ FIREBASE_SERVICE_ACCOUNT_BASE64 no configurada en Streamlit secrets")
-            return
-            
-    except KeyError as e:
-        st.error(f"❌ Secret no encontrado: {str(e)}")
-        st.info("💡 Configura tus secrets en la sección 'Secrets' de tu aplicación Streamlit")
-        return
+        if not st.secrets.get("GEMINI_API_KEY"):
+            st.error("❌ GEMINI_API_KEY no configurada en Streamlit secrets.")
+            st.stop()
+        if not st.secrets.get("FIREBASE_SERVICE_ACCOUNT_BASE64"):
+            st.error("❌ FIREBASE_SERVICE_ACCOUNT_BASE64 no configurada en Streamlit secrets.")
+            st.stop()
+    except Exception:
+        st.error("❌ No se pudieron cargar los secretos. Asegúrate de que tu archivo `secrets.toml` está configurado.")
+        st.stop()
+
+    firebase = initialize_firebase_connection()
+    yolo_model = load_yolo_model()
     
-    # Inicializar Firebase
-    try:
-        firebase = FirebaseUtils()
-        st.success("✅ Conexión a Firebase establecida")
-    except Exception as e:
-        st.error(f"❌ Error conectando a Firebase: {str(e)}")
-        return
+    # --- NAVEGACIÓN POR PESTAÑAS ---
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📷 Reconocimiento", 
+        "📊 Inventario", 
+        "📈 Estadísticas", 
+        "⚙️ Configuración", 
+        "👥 Acerca de"
+    ])
     
-    # Inicializar Gemini
-    try:
-        gemini = GeminiUtils()
-        model_info = gemini.get_model_info()
-        st.success(f"✅ Gemini AI inicializado - Modelo: {model_info['current_model']}")
-        
-        # Mostrar información del modelo en sidebar
-        with st.sidebar:
-            st.header("🔧 Información del Sistema")
-            st.write(f"**Modelo actual:** {model_info['current_model']}")
-            st.write(f"**Modelos disponibles:** {len(model_info['available_models'])}")
-            st.write(f"**Proyecto Firebase:** {firebase.project_id}")
-            
-    except Exception as e:
-        st.error(f"❌ Error inicializando Gemini AI: {str(e)}")
-        return
-    
-    # Crear pestañas
-    tab1, tab2, tab3, tab4 = st.tabs(["📷 Reconocimiento", "📊 Inventario", "📈 Estadísticas", "⚙️ Configuración"])
-    
+    # --- PESTAÑA DE RECONOCIMIENTO ---
     with tab1:
-        st.header("Reconocimiento de Elementos")
+        st.header("Reconocimiento de Elementos con YOLO y Gemini")
         
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.subheader("Subir Imagen")
-            uploaded_file = st.file_uploader(
-                "Selecciona una imagen del inventario",
-                type=['png', 'jpg', 'jpeg'],
-                help="Sube una imagen clara del elemento que deseas analizar"
-            )
+        img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera_input")
+
+        if img_buffer:
+            bytes_data = img_buffer.getvalue()
+            image = Image.open(io.BytesIO(bytes_data))
+            cv_image = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+
+            with st.spinner("Detectando objetos con YOLO..."):
+                results = yolo_model(cv_image)
             
-            if uploaded_file is not None:
-                # Mostrar imagen
-                image = Image.open(uploaded_file)
-                st.image(image, caption="Imagen subida", use_column_width=True)
-                
-                # Convertir a bytes para Gemini
-                img_byte_arr = io.BytesIO()
-                image.save(img_byte_arr, format='JPEG')
-                img_byte_arr = img_byte_arr.getvalue()
-        
-        with col2:
-            st.subheader("Descripción del Elemento")
-            description = st.text_area(
-                "Describe brevemente el elemento (opcional)",
-                placeholder="Ej: Laptop Dell, Silla de oficina, etc.",
-                height=100
-            )
-            
-            if st.button("🔍 Analizar Elemento", type="primary"):
-                if uploaded_file is not None:
-                    with st.spinner("Analizando elemento con IA..."):
-                        try:
-                            # Analizar con Gemini
-                            result = gemini.analyze_inventory_item(
-                                description or "Elemento del inventario",
-                                img_byte_arr
-                            )
+            st.subheader("🔍 Objetos Detectados")
+            annotated_image = results[0].plot()
+            annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+            st.image(annotated_image_rgb, caption="Imagen con objetos detectados.", use_container_width=True)
+
+            detections = results[0]
+            if detections.boxes:
+                detected_classes = [detections.names[c] for c in detections.boxes.cls.tolist()]
+                counts = Counter(detected_classes)
+                st.write("**Conteo en escena:**"); st.table(counts)
+
+                st.subheader("▶️ Analizar un objeto en detalle con Gemini")
+                for i, box in enumerate(detections.boxes):
+                    class_name = detections.names[box.cls[0].item()]
+                    if st.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}"):
+                        coords = box.xyxy[0].cpu().numpy().astype(int)
+                        x1, y1, x2, y2 = coords
+                        cropped_pil_image = Image.fromarray(cv2.cvtColor(cv_image[y1:y2, x1:x2], cv2.COLOR_BGR2RGB))
+                        
+                        st.image(cropped_pil_image, caption=f"Recorte enviado para análisis...")
+
+                        with st.spinner("Analizando con Gemini AI..."):
+                            prompt = """
+                            Analiza la imagen de este objeto y proporciona un análisis detallado.
+                            Responde únicamente con un objeto JSON válido con las siguientes claves:
+                            - "nombre_producto": (string)
+                            - "categoria": (string)
+                            - "estado": (string) "nuevo", "usado", etc.
+                            - "material_principal": (string)
+                            - "caracteristicas": (array of strings)
+                            """
+                            img_byte_arr = io.BytesIO()
+                            cropped_pil_image.save(img_byte_arr, format='JPEG')
+                            img_byte_arr = img_byte_arr.getvalue()
+
+                            result_text = _call_gemini_with_fallback(prompt, image=cropped_pil_image)
                             
-                            if result["success"]:
-                                st.success("✅ Análisis completado")
-                                
-                                # Mostrar resultados
-                                st.subheader("📋 Resultados del Análisis")
-                                
-                                try:
-                                    # Intentar parsear como JSON
-                                    import json
-                                    analysis_data = json.loads(result["response"])
-                                    
-                                    # Mostrar en formato organizado
-                                    for key, value in analysis_data.items():
-                                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
-                                        
-                                except json.JSONDecodeError:
-                                    # Si no es JSON, mostrar como texto
-                                    st.write(result["response"])
-                                
-                                # Botón para guardar en Firebase
-                                if st.button("💾 Guardar en Inventario"):
-                                    try:
-                                        # Preparar datos para Firebase
-                                        inventory_data = {
-                                            "description": description or "Elemento analizado",
-                                            "analysis": result["response"],
-                                            "image_url": "uploaded_image",  # Aquí podrías subir la imagen a Firebase Storage
-                                            "timestamp": firebase.get_timestamp(),
-                                            "model_used": result.get("model_used", "unknown")
-                                        }
-                                        
-                                        # Guardar en Firebase
-                                        doc_ref = firebase.add_inventory_item(inventory_data)
-                                        st.success(f"✅ Elemento guardado con ID: {doc_ref.id}")
-                                        
-                                    except Exception as e:
-                                        st.error(f"❌ Error guardando en Firebase: {str(e)}")
-                            else:
-                                st.error(f"❌ Error en el análisis: {result['error']}")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Error procesando imagen: {str(e)}")
-                            logger.error(f"Error procesando imagen: {str(e)}")
-                else:
-                    st.warning("⚠️ Por favor, sube una imagen primero")
-    
+                            try:
+                                clean_json_str = result_text.strip().lstrip("```json").rstrip("```")
+                                analysis_data = json.loads(clean_json_str)
+                                st.session_state.last_analysis = analysis_data
+                                st.success("Análisis completado.")
+                            except (json.JSONDecodeError, KeyError) as e:
+                                st.error(f"Error al procesar la respuesta de la IA: {e}")
+                                st.text_area("Respuesta recibida:", result_text, height=150)
+
+            else:
+                st.info("No se detectaron objetos en la imagen.")
+
+        if 'last_analysis' in st.session_state:
+            st.subheader("📋 Resultados del Último Análisis")
+            st.json(st.session_state.last_analysis)
+            if st.button("💾 Guardar en Inventario"):
+                try:
+                    inventory_data = {
+                        "description": st.session_state.last_analysis.get("nombre_producto", "Elemento sin nombre"),
+                        "analysis": json.dumps(st.session_state.last_analysis, indent=2),
+                        "timestamp": firebase.get_timestamp(),
+                    }
+                    firebase.add_inventory_item(inventory_data)
+                    st.success(f"✅ Elemento '{inventory_data['description']}' guardado con éxito.")
+                    del st.session_state.last_analysis
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error guardando en Firebase: {e}")
+
+    # --- PESTAÑA DE INVENTARIO ---
     with tab2:
         st.header("Gestión de Inventario")
-        
         try:
-            # Obtener elementos del inventario
-            inventory_items = firebase.get_inventory_items()
+            inventory_items_docs = firebase.get_inventory_items()
+            inventory_items = [doc.to_dict() for doc in inventory_items_docs]
+            for item, doc in zip(inventory_items, inventory_items_docs):
+                item['id'] = doc.id
             
             if inventory_items:
                 st.write(f"📦 Total de elementos: {len(inventory_items)}")
+                search_term = st.text_input("🔍 Buscar elemento por descripción")
                 
-                # Buscar elementos
-                search_term = st.text_input("🔍 Buscar elemento")
+                filtered_items = [
+                    item for item in inventory_items 
+                    if search_term.lower() in item.get("description", "").lower()
+                ] if search_term else inventory_items
                 
-                if search_term:
-                    filtered_items = [
-                        item for item in inventory_items 
-                        if search_term.lower() in item.get("description", "").lower()
-                    ]
-                else:
-                    filtered_items = inventory_items
-                
-                # Mostrar elementos
                 for i, item in enumerate(filtered_items):
                     with st.expander(f"📦 {item.get('description', 'Sin descripción')}"):
-                        col1, col2 = st.columns([2, 1])
+                        st.write(f"**ID:** {item.get('id', 'N/A')}")
+                        st.write(f"**Fecha:** {item.get('timestamp', 'N/A')}")
+                        analysis = item.get('analysis', '{}')
+                        try:
+                            st.json(json.loads(analysis))
+                        except json.JSONDecodeError:
+                            st.text(analysis)
                         
-                        with col1:
-                            st.write(f"**ID:** {item.id}")
-                            st.write(f"**Fecha:** {item.get('timestamp', 'N/A')}")
-                            st.write(f"**Modelo IA:** {item.get('model_used', 'N/A')}")
-                            
-                            # Mostrar análisis
-                            analysis = item.get('analysis', '')
-                            if analysis:
-                                st.write("**Análisis:**")
-                                st.text_area("", value=analysis, height=100, disabled=True, key=f"analysis_{i}")
-                        
-                        with col2:
-                            if st.button("🗑️ Eliminar", key=f"delete_{i}"):
-                                try:
-                                    firebase.delete_inventory_item(item.id)
-                                    st.success("✅ Elemento eliminado")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"❌ Error eliminando: {str(e)}")
+                        if st.button("🗑️ Eliminar", key=f"delete_{i}"):
+                            firebase.delete_inventory_item(item['id'])
+                            st.success("✅ Elemento eliminado.")
+                            st.rerun()
             else:
-                st.info("📭 No hay elementos en el inventario")
-                
+                st.info("📭 No hay elementos en el inventario.")
         except Exception as e:
-            st.error(f"❌ Error cargando inventario: {str(e)}")
-    
+            st.error(f"❌ Error cargando inventario: {e}")
+
+    # --- PESTAÑA DE ESTADÍSTICAS ---
     with tab3:
         st.header("Estadísticas del Sistema")
-        
         try:
-            inventory_items = firebase.get_inventory_items()
-            
-            if inventory_items:
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Total Elementos", len(inventory_items))
-                
-                with col2:
-                    # Contar modelos usados
-                    models_used = {}
-                    for item in inventory_items:
-                        model = item.get('model_used', 'unknown')
-                        models_used[model] = models_used.get(model, 0) + 1
-                    
-                    most_used_model = max(models_used, key=models_used.get) if models_used else "N/A"
-                    st.metric("Modelo Más Usado", most_used_model)
-                
-                with col3:
-                    st.metric("Último Análisis", "Hoy" if inventory_items else "N/A")
-                
-                # Gráfico de modelos usados
-                if len(models_used) > 1:
-                    st.subheader("📊 Distribución de Modelos")
-                    st.bar_chart(models_used)
+            stats = firebase.get_inventory_stats()
+            if stats['total_items'] > 0:
+                col1, col2 = st.columns(2)
+                col1.metric("Total de Elementos", stats['total_items'])
+                col2.metric("Última Actualización", pd.to_datetime(stats['last_update']).strftime('%Y-%m-%d %H:%M') if stats['last_update'] else "N/A")
+
+                if stats['categories']:
+                    st.subheader("📊 Distribución por Categorías")
+                    st.bar_chart(stats['categories'])
             else:
-                st.info("📊 No hay datos suficientes para mostrar estadísticas")
-                
+                st.info("📊 No hay datos suficientes para mostrar estadísticas.")
         except Exception as e:
-            st.error(f"❌ Error cargando estadísticas: {str(e)}")
-    
+            st.error(f"❌ Error cargando estadísticas: {e}")
+
+    # --- PESTAÑA DE CONFIGURACIÓN ---
     with tab4:
-        st.header("Configuración del Sistema")
-        
-        # Información del modelo
-        st.subheader("🤖 Configuración de Gemini AI")
-        try:
-            model_info = gemini.get_model_info()
-            
-            st.write(f"**Modelo actual:** {model_info['current_model']}")
-            st.write("**Modelos disponibles:**")
-            for i, model in enumerate(model_info['available_models']):
-                status = "✅" if model == model_info['current_model'] else "⏳"
-                st.write(f"{status} {model}")
-            
-            # Configuración actual
-            st.write("**Configuración actual:**")
-            config_df = pd.DataFrame([model_info['config']])
-            st.dataframe(config_df, use_container_width=True)
-            
-        except Exception as e:
-            st.error(f"❌ Error obteniendo información del modelo: {str(e)}")
-        
-        # Variables de entorno
+        st.header("Configuración y Estado del Sistema")
         st.subheader("🔧 Streamlit Secrets")
-        secrets_status = {
-            "GEMINI_API_KEY": "✅ Configurada" if st.secrets.get("GEMINI_API_KEY") else "❌ No configurada",
-            "FIREBASE_SERVICE_ACCOUNT_BASE64": "✅ Configurada" if st.secrets.get("FIREBASE_SERVICE_ACCOUNT_BASE64") else "❌ No configurada"
-        }
+        st.success("✅ GEMINI_API_KEY Configurada")
+        st.success("✅ FIREBASE_SERVICE_ACCOUNT_BASE64 Configurada")
         
-        for secret, status in secrets_status.items():
-            st.write(f"**{secret}:** {status}")
-        
-        # Información del proyecto Firebase
         st.subheader("🔥 Información de Firebase")
-        try:
-            st.write(f"**Proyecto ID:** {firebase.project_id}")
-            st.write("**Estado de conexión:** ✅ Conectado")
-        except Exception as e:
-            st.write(f"**Estado de conexión:** ❌ Error: {str(e)}")
-        
-        # Botón para probar conexiones
-        if st.button("🧪 Probar Conexiones"):
-            with st.spinner("Probando conexiones..."):
-                # Probar Gemini
+        st.write(f"**Proyecto ID:** {firebase.project_id}")
+        st.write("**Estado de conexión:** ✅ Conectado")
+
+        if st.button("🧪 Probar Conexión con Gemini"):
+            with st.spinner("Probando..."):
+                response_text = _call_gemini_with_fallback("Hola, esto es una prueba de conexión.")
                 try:
-                    test_response = gemini.generate_content("Hola, esto es una prueba")
-                    if test_response["success"]:
-                        st.success("✅ Gemini AI funcionando correctamente")
+                    response_json = json.loads(response_text)
+                    if "error" in response_json:
+                        st.error(f"❌ Prueba fallida: {response_json['error']}")
                     else:
-                        st.error(f"❌ Error en Gemini: {test_response['error']}")
-                except Exception as e:
-                    st.error(f"❌ Error probando Gemini: {str(e)}")
-                
-                # Probar Firebase
-                try:
-                    test_items = firebase.get_inventory_items()
-                    st.success(f"✅ Firebase conectado - {len(test_items)} elementos")
-                except Exception as e:
-                    st.error(f"❌ Error probando Firebase: {str(e)}")
+                        st.success("✅ Conexión con Gemini AI exitosa.")
+                except json.JSONDecodeError:
+                    st.success("✅ Conexión con Gemini AI exitosa.")
+                    st.text(response_text)
+
+
+    # --- PESTAÑA "ACERCA DE" ---
+    with tab5:
+        st.header("Sobre el Proyecto y sus Creadores")
+        st.markdown("""
+        Esta aplicación representa una solución avanzada para la **gestión inteligente de inventarios**. 
+        Utiliza un modelo híbrido de inteligencia artificial que combina la **detección de objetos en tiempo real (YOLO)** con el **análisis profundo de atributos de imagen (Google Gemini)**.
+        """)
+        st.info("Creado por Joseph Javier Sánchez Acuña y supervisado por Xammy Alexander Victoria Gonzalez.")
 
 if __name__ == "__main__":
     main()
