@@ -1,8 +1,17 @@
-streamlit
-google-generativeai>=0.8.0
-firebase-admin
-Pillow
-opencv-python-headless
-torch
-torchvision
-ultralytics
+# Core dependencies
+streamlit>=1.28.0
+google-generativeai>=0.3.0
+firebase-admin>=6.2.0
+Pillow>=10.0.0
+
+# Additional utilities
+python-dotenv>=1.0.0
+requests>=2.31.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Logging and monitoring
+loguru>=0.7.0
+
+# Image processing
+opencv-python>=4.8.0
