@@ -1,8 +1,10 @@
 import google.generativeai as genai
 import logging
-import os
+import streamlit as st
 from typing import Optional, Dict, Any
 import json
+import base64
+import io
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -10,10 +12,12 @@ logger = logging.getLogger(__name__)
 
 class GeminiUtils:
     def __init__(self):
-        """Inicializar la clase GeminiUtils con configuración optimizada."""
-        self.api_key = os.getenv('GEMINI_API_KEY')
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY no encontrada en las variables de entorno")
+        """Inicializar la clase GeminiUtils con configuración optimizada usando Streamlit secrets."""
+        # Obtener API key desde Streamlit secrets
+        try:
+            self.api_key = st.secrets["GEMINI_API_KEY"]
+        except KeyError:
+            raise ValueError("GEMINI_API_KEY no encontrada en Streamlit secrets. Configúrala en .streamlit/secrets.toml")
         
         # Configurar la API
         genai.configure(api_key=self.api_key)
