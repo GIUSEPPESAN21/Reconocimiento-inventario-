@@ -1,197 +1,285 @@
 import streamlit as st
+import logging
+from gemini_utils import GeminiUtils, get_gemini_response
+from firebase_utils import FirebaseUtils
+import os
 from PIL import Image
-import firebase_utils
-import gemini_utils
-import cv2
-import numpy as np
-from ultralytics import YOLO
-import json
-from collections import Counter
+import io
+import pandas as pd
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    page_title="Inventario Inteligente Experto",
-    page_icon="🧠",
-    layout="wide"
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
 )
 
-# --- CARGA DE MODELOS Y CONEXIONES ---
-@st.cache_resource
-def load_yolo_model():
-    """Carga el modelo YOLO pre-entrenado una sola vez."""
-    model = YOLO('yolov8m.pt')
-    return model
+logger = logging.getLogger(__name__)
 
-try:
-    yolo_model = load_yolo_model()
-    firebase_utils.initialize_firebase()
-except Exception as e:
-    st.error(f"**Error Crítico de Inicialización.** {e}")
-    st.stop()
-
-# --- TÍTULO PRINCIPAL DE LA APLICACIÓN ---
-st.title("🧠 Inventario Inteligente Experto")
-
-# --- NAVEGACIÓN POR PESTAÑAS ---
-tab_inventario, tab_acerca_de = st.tabs(["📷 Reconocimiento de Inventario", "👥 Acerca de Nosotros"])
-
-# --- CONTENIDO DE LA PESTAÑA DE INVENTARIO ---
-with tab_inventario:
-    st.markdown("Sistema híbrido con **YOLO** para detección y **Gemini** para análisis de atributos.")
+def main():
+    st.set_page_config(
+        page_title="Sistema de Reconocimiento de Inventario",
+        page_icon="📦",
+        layout="wide"
+    )
     
-    col1, col2 = st.columns([2, 1])
-
-    # --- PANEL DE CONTROL (COLUMNA 2) ---
-    with col2:
-        st.header("📊 Panel de Control")
-        with st.spinner("Cargando inventario..."):
-            inventory_list = firebase_utils.get_inventory()
-        inventory_names = [item.get('name') for item in inventory_list]
-
-        with st.expander("➕ Añadir Artículo", expanded=True):
-            new_item_name = st.text_input("Nombre del artículo", key="add_item_input")
-            if st.button("Guardar", use_container_width=True):
-                if new_item_name and new_item_name.strip() and new_item_name not in inventory_names:
-                    firebase_utils.add_item(new_item_name.strip())
-                    st.success(f"'{new_item_name}' añadido.")
-                    st.rerun()
-                else:
-                    st.warning("El nombre no puede estar vacío o ya existe.")
-
-        st.subheader("📋 Inventario Actual")
-        st.dataframe(inventory_names, use_container_width=True, column_config={"value": "Artículo"})
+    st.title("🤖 Sistema de Reconocimiento de Inventario con IA")
+    st.markdown("---")
+    
+    # Inicializar Firebase
+    try:
+        firebase = FirebaseUtils()
+        st.success("✅ Conexión a Firebase establecida")
+    except Exception as e:
+        st.error(f"❌ Error conectando a Firebase: {str(e)}")
+        return
+    
+    # Inicializar Gemini
+    try:
+        gemini = GeminiUtils()
+        model_info = gemini.get_model_info()
+        st.success(f"✅ Gemini AI inicializado - Modelo: {model_info['current_model']}")
         
-        st.subheader("✔️ Resultado del Análisis")
-        if 'analysis_result' in st.session_state:
-            result = st.session_state.analysis_result
-            if result.get('best_match') == "Artículo no encontrado":
-                st.warning("Este objeto no coincide con tu inventario.")
-                with st.expander("Registrar Nuevo Artículo", expanded=True):
-                    attributes = result.get('attributes', {})
-                    st.write("Atributos detectados por la IA:")
-                    st.json(attributes)
-                    suggested_name = f"{attributes.get('main_color', '')} {attributes.get('main_object', '')}".strip().capitalize()
-                    new_item_suggestion = st.text_input("Nombre para el nuevo artículo:", value=suggested_name, key="suggestion_input")
-                    if st.button("✅ Registrar este artículo", use_container_width=True, key="register_new"):
-                        if new_item_suggestion and new_item_suggestion.strip():
-                            firebase_utils.add_item(new_item_suggestion.strip())
-                            st.success(f"'{new_item_suggestion}' registrado con éxito.")
-                            del st.session_state['analysis_result']
-                            st.rerun()
-            else:
-                st.success(f"**Mejor Coincidencia:** {result.get('best_match')}")
-                st.info(f"**Razón de la IA:** {result.get('reasoning')}")
-                with st.expander("Ver atributos detallados"):
-                    st.json(result.get('attributes', {}))
-        else:
-            st.info("Selecciona un objeto para analizarlo.")
-
-    # --- CAPTURA Y ANÁLISIS (COLUMNA 1) ---
-    with col1:
-        st.header("📷 Captura y Detección")
-        img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera")
-
-        if img_buffer:
-            bytes_data = img_buffer.getvalue()
-            cv_image = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+        # Mostrar información del modelo en sidebar
+        with st.sidebar:
+            st.header("🔧 Información del Sistema")
+            st.write(f"**Modelo actual:** {model_info['current_model']}")
+            st.write(f"**Modelos disponibles:** {len(model_info['available_models'])}")
             
-            with st.spinner("🧠 Detectando objetos..."):
-                results = yolo_model(cv_image)
-
-            st.subheader("🔍 Objetos Detectados")
-            annotated_image = results[0].plot()
-            annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
-            st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_container_width=True)
+    except Exception as e:
+        st.error(f"❌ Error inicializando Gemini AI: {str(e)}")
+        return
+    
+    # Crear pestañas
+    tab1, tab2, tab3, tab4 = st.tabs(["📷 Reconocimiento", "📊 Inventario", "📈 Estadísticas", "⚙️ Configuración"])
+    
+    with tab1:
+        st.header("Reconocimiento de Elementos")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.subheader("Subir Imagen")
+            uploaded_file = st.file_uploader(
+                "Selecciona una imagen del inventario",
+                type=['png', 'jpg', 'jpeg'],
+                help="Sube una imagen clara del elemento que deseas analizar"
+            )
             
-            detections = results[0]
-            if detections.boxes:
-                detected_classes = [detections.names[c] for c in detections.boxes.cls.tolist()]
-                counts = Counter(detected_classes)
-                st.write("**Conteo en escena:**"); st.table(counts)
-
-            st.subheader("▶️ Analizar un objeto en detalle")
-            if not detections.boxes:
-                st.info("No se detectó ningún objeto para analizar.")
-            else:
-                for i, box in enumerate(detections.boxes):
-                    class_name = detections.names[box.cls[0].item()]
-                    if st.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
-                        coords = box.xyxy[0].cpu().numpy().astype(int)
-                        x1, y1, x2, y2 = coords
-                        cropped_pil_image = Image.fromarray(cv2.cvtColor(cv_image[y1:y2, x1:x2], cv2.COLOR_BGR2RGB))
-                        st.image(cropped_pil_image, caption=f"Recorte enviado para análisis...")
-
-                        with st.spinner(f"🤖 Paso 1: Extrayendo atributos..."):
-                            attributes_str = gemini_utils.get_image_attributes(cropped_pil_image)
-                        
+            if uploaded_file is not None:
+                # Mostrar imagen
+                image = Image.open(uploaded_file)
+                st.image(image, caption="Imagen subida", use_column_width=True)
+                
+                # Convertir a bytes para Gemini
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format='JPEG')
+                img_byte_arr = img_byte_arr.getvalue()
+        
+        with col2:
+            st.subheader("Descripción del Elemento")
+            description = st.text_area(
+                "Describe brevemente el elemento (opcional)",
+                placeholder="Ej: Laptop Dell, Silla de oficina, etc.",
+                height=100
+            )
+            
+            if st.button("🔍 Analizar Elemento", type="primary"):
+                if uploaded_file is not None:
+                    with st.spinner("Analizando elemento con IA..."):
                         try:
-                            clean_json_str = attributes_str.strip().lstrip("```json").rstrip("```")
-                            attributes = json.loads(clean_json_str)
+                            # Analizar con Gemini
+                            result = gemini.analyze_inventory_item(
+                                description or "Elemento del inventario",
+                                img_byte_arr
+                            )
                             
-                            with st.spinner("🤖 Paso 2: Razonando la mejor coincidencia..."):
-                                match_str = gemini_utils.get_best_match_from_attributes(attributes, inventory_names)
-                            
-                            clean_match_str = match_str.strip().lstrip("```json").rstrip("```")
-                            match_data = json.loads(clean_match_str)
-                            
-                            st.session_state.analysis_result = {
-                                "attributes": attributes, "best_match": match_data.get("best_match"), "reasoning": match_data.get("reasoning")
-                            }
-                        except (json.JSONDecodeError, KeyError) as e:
-                            st.session_state.analysis_result = {"attributes": {"error": "Respuesta no válida de la IA."}, "best_match": "Artículo no encontrado", "reasoning": f"Error: {e}"}
-                        st.rerun()
-
-# --- CONTENIDO DE LA PESTAÑA "ACERCA DE" ---
-with tab_acerca_de:
-    st.header("Sobre el Proyecto y sus Creadores")
-
-    # Información del Estudiante
-    with st.container(border=True):
-        col_img_est, col_info_est = st.columns([1, 3])
-        with col_img_est:
-            st.image("https://placehold.co/250x250/000000/FFFFFF?text=J.S.", caption="Joseph Javier Sánchez Acuña")
-        
-        with col_info_est:
-            st.title("Joseph Javier Sánchez Acuña")
-            st.subheader("_Estudiante de Ingeniería Industrial_")
-            st.subheader("_Experto en Inteligencia Artificial y Desarrollo de Software._")
-            st.markdown(
-                """
-                - 🔗 **LinkedIn:** [joseph-javier-sánchez-acuña](https://www.linkedin.com/in/joseph-javier-sánchez-acuña-150410275)
-                - 📂 **GitHub:** [GIUSEPPESAN21](https://github.com/GIUSEPPESAN21)
-                - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
-                """
-            )
+                            if result["success"]:
+                                st.success("✅ Análisis completado")
+                                
+                                # Mostrar resultados
+                                st.subheader("📋 Resultados del Análisis")
+                                
+                                try:
+                                    # Intentar parsear como JSON
+                                    import json
+                                    analysis_data = json.loads(result["response"])
+                                    
+                                    # Mostrar en formato organizado
+                                    for key, value in analysis_data.items():
+                                        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                                        
+                                except json.JSONDecodeError:
+                                    # Si no es JSON, mostrar como texto
+                                    st.write(result["response"])
+                                
+                                # Botón para guardar en Firebase
+                                if st.button("💾 Guardar en Inventario"):
+                                    try:
+                                        # Preparar datos para Firebase
+                                        inventory_data = {
+                                            "description": description or "Elemento analizado",
+                                            "analysis": result["response"],
+                                            "image_url": "uploaded_image",  # Aquí podrías subir la imagen a Firebase Storage
+                                            "timestamp": firebase.get_timestamp(),
+                                            "model_used": result.get("model_used", "unknown")
+                                        }
+                                        
+                                        # Guardar en Firebase
+                                        doc_ref = firebase.add_inventory_item(inventory_data)
+                                        st.success(f"✅ Elemento guardado con ID: {doc_ref.id}")
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Error guardando en Firebase: {str(e)}")
+                            else:
+                                st.error(f"❌ Error en el análisis: {result['error']}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error procesando imagen: {str(e)}")
+                            logger.error(f"Error procesando imagen: {str(e)}")
+                else:
+                    st.warning("⚠️ Por favor, sube una imagen primero")
     
-    st.markdown("---")
-
-    # Información del Profesor
-    with st.container(border=True):
-        col_img_prof, col_info_prof = st.columns([1, 3])
-        with col_img_prof:
-            # Puedes cambiar el texto del placeholder
-            st.image("https://placehold.co/250x250/2B3137/FFFFFF?text=J.M.", caption="Jhon Alejandro Mojica")
+    with tab2:
+        st.header("Gestión de Inventario")
         
-        with col_info_prof:
-            st.title("Xammy Alexander Victoria Gonzalez")
-            st.subheader("Profesor Tiempo Completo")
-            st.markdown(
-                """
-                - 📧 **Email:** [xammy.victoria@uniminuto.edu.co](mailto:xammy.victoria@uniminuto.edu.co)
-                """
-            )
+        try:
+            # Obtener elementos del inventario
+            inventory_items = firebase.get_inventory_items()
+            
+            if inventory_items:
+                st.write(f"📦 Total de elementos: {len(inventory_items)}")
+                
+                # Buscar elementos
+                search_term = st.text_input("🔍 Buscar elemento")
+                
+                if search_term:
+                    filtered_items = [
+                        item for item in inventory_items 
+                        if search_term.lower() in item.get("description", "").lower()
+                    ]
+                else:
+                    filtered_items = inventory_items
+                
+                # Mostrar elementos
+                for i, item in enumerate(filtered_items):
+                    with st.expander(f"📦 {item.get('description', 'Sin descripción')}"):
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            st.write(f"**ID:** {item.id}")
+                            st.write(f"**Fecha:** {item.get('timestamp', 'N/A')}")
+                            st.write(f"**Modelo IA:** {item.get('model_used', 'N/A')}")
+                            
+                            # Mostrar análisis
+                            analysis = item.get('analysis', '')
+                            if analysis:
+                                st.write("**Análisis:**")
+                                st.text_area("", value=analysis, height=100, disabled=True, key=f"analysis_{i}")
+                        
+                        with col2:
+                            if st.button("🗑️ Eliminar", key=f"delete_{i}"):
+                                try:
+                                    firebase.delete_inventory_item(item.id)
+                                    st.success("✅ Elemento eliminado")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error eliminando: {str(e)}")
+            else:
+                st.info("📭 No hay elementos en el inventario")
+                
+        except Exception as e:
+            st.error(f"❌ Error cargando inventario: {str(e)}")
+    
+    with tab3:
+        st.header("Estadísticas del Sistema")
+        
+        try:
+            inventory_items = firebase.get_inventory_items()
+            
+            if inventory_items:
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Total Elementos", len(inventory_items))
+                
+                with col2:
+                    # Contar modelos usados
+                    models_used = {}
+                    for item in inventory_items:
+                        model = item.get('model_used', 'unknown')
+                        models_used[model] = models_used.get(model, 0) + 1
+                    
+                    most_used_model = max(models_used, key=models_used.get) if models_used else "N/A"
+                    st.metric("Modelo Más Usado", most_used_model)
+                
+                with col3:
+                    st.metric("Último Análisis", "Hoy" if inventory_items else "N/A")
+                
+                # Gráfico de modelos usados
+                if len(models_used) > 1:
+                    st.subheader("📊 Distribución de Modelos")
+                    st.bar_chart(models_used)
+            else:
+                st.info("📊 No hay datos suficientes para mostrar estadísticas")
+                
+        except Exception as e:
+            st.error(f"❌ Error cargando estadísticas: {str(e)}")
+    
+    with tab4:
+        st.header("Configuración del Sistema")
+        
+        # Información del modelo
+        st.subheader("🤖 Configuración de Gemini AI")
+        try:
+            model_info = gemini.get_model_info()
+            
+            st.write(f"**Modelo actual:** {model_info['current_model']}")
+            st.write("**Modelos disponibles:**")
+            for i, model in enumerate(model_info['available_models']):
+                status = "✅" if model == model_info['current_model'] else "⏳"
+                st.write(f"{status} {model}")
+            
+            # Configuración actual
+            st.write("**Configuración actual:**")
+            config_df = pd.DataFrame([model_info['config']])
+            st.dataframe(config_df, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"❌ Error obteniendo información del modelo: {str(e)}")
+        
+        # Variables de entorno
+        st.subheader("🔧 Variables de Entorno")
+        env_vars = {
+            "GEMINI_API_KEY": "✅ Configurada" if os.getenv('GEMINI_API_KEY') else "❌ No configurada",
+            "FIREBASE_PROJECT_ID": "✅ Configurada" if os.getenv('FIREBASE_PROJECT_ID') else "❌ No configurada"
+        }
+        
+        for var, status in env_vars.items():
+            st.write(f"**{var}:** {status}")
+        
+        # Botón para probar conexiones
+        if st.button("🧪 Probar Conexiones"):
+            with st.spinner("Probando conexiones..."):
+                # Probar Gemini
+                try:
+                    test_response = gemini.generate_content("Hola, esto es una prueba")
+                    if test_response["success"]:
+                        st.success("✅ Gemini AI funcionando correctamente")
+                    else:
+                        st.error(f"❌ Error en Gemini: {test_response['error']}")
+                except Exception as e:
+                    st.error(f"❌ Error probando Gemini: {str(e)}")
+                
+                # Probar Firebase
+                try:
+                    test_items = firebase.get_inventory_items()
+                    st.success(f"✅ Firebase conectado - {len(test_items)} elementos")
+                except Exception as e:
+                    st.error(f"❌ Error probando Firebase: {str(e)}")
 
-    st.markdown("---")
-
-    # Descripción de la Herramienta
-    with st.container(border=True):
-        st.subheader("Acerca de esta Herramienta")
-        st.markdown("""
-        Esta aplicación representa una solución avanzada para la **gestión inteligente de inventarios**. 
-        Utiliza un modelo híbrido de inteligencia artificial que combina la **detección de objetos en tiempo real (YOLO)** con el **análisis profundo de atributos de imagen (Google Gemini)**.
-
-        El objetivo es proporcionar una herramienta que no solo identifique objetos, sino que también los cuente, 
-        analice sus características y permita un registro dinámico en una base de datos en la nube (Firebase). 
-        Cada componente está diseñado para maximizar la precisión, la velocidad y la facilidad de uso, 
-        facilitando la toma de decisiones basada en datos y mejorando la eficiencia operativa.
-        """)
+if __name__ == "__main__":
+    main()
