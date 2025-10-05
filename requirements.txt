@@ -1,5 +1,5 @@
 streamlit
-google-generativeai
+google-generativeai>=0.5.0
 firebase-admin
 Pillow
 opencv-python-headless
