@@ -1,10 +1,12 @@
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
 import logging
-import os
+import streamlit as st
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
+import base64
+import io
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -12,25 +14,38 @@ logger = logging.getLogger(__name__)
 
 class FirebaseUtils:
     def __init__(self):
-        """Inicializar Firebase Admin SDK."""
-        self.project_id = os.getenv('FIREBASE_PROJECT_ID')
-        self.credentials_path = os.getenv('FIREBASE_CREDENTIALS_PATH', 'firebase-credentials.json')
-        
-        if not self.project_id:
-            raise ValueError("FIREBASE_PROJECT_ID no encontrada en las variables de entorno")
+        """Inicializar Firebase Admin SDK usando Streamlit secrets."""
+        try:
+            # Obtener credenciales desde Streamlit secrets
+            firebase_service_account_base64 = st.secrets["FIREBASE_SERVICE_ACCOUNT_BASE64"]
+            
+            # Decodificar el JSON base64
+            service_account_json = base64.b64decode(firebase_service_account_base64).decode('utf-8')
+            
+            # Parsear el JSON
+            service_account_info = json.loads(service_account_json)
+            
+            self.project_id = service_account_info.get('project_id')
+            
+            if not self.project_id:
+                raise ValueError("project_id no encontrado en las credenciales de Firebase")
+            
+            logger.info(f"Proyecto Firebase: {self.project_id}")
+            
+        except KeyError:
+            raise ValueError("FIREBASE_SERVICE_ACCOUNT_BASE64 no encontrada en Streamlit secrets")
+        except Exception as e:
+            raise ValueError(f"Error decodificando credenciales de Firebase: {str(e)}")
         
         # Inicializar Firebase Admin SDK
         try:
             # Verificar si ya está inicializado
             if not firebase_admin._apps:
-                if os.path.exists(self.credentials_path):
-                    cred = credentials.Certificate(self.credentials_path)
-                    firebase_admin.initialize_app(cred, {
-                        'storageBucket': f'{self.project_id}.appspot.com'
-                    })
-                else:
-                    # Usar credenciales por defecto (para Google Cloud)
-                    firebase_admin.initialize_app()
+                # Crear credenciales desde el diccionario
+                cred = credentials.Certificate(service_account_info)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': f'{self.project_id}.appspot.com'
+                })
             
             self.db = firestore.client()
             self.bucket = storage.bucket()
