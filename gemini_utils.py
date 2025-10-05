@@ -4,12 +4,12 @@ import streamlit as st
 import json
 import logging
 
-# Configure logging for better debugging
+# Configurar logging para una mejor depuración
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def _call_gemini_with_fallback(prompt, image=None):
     """
-    Función interna para llamar a la API de Gemini con una lista de modelos, 
+    Función interna para llamar a la API de Gemini con una lista de modelos,
     fallback automático y registro de errores detallado.
     """
     last_error = None
@@ -19,6 +19,7 @@ def _call_gemini_with_fallback(prompt, image=None):
     except KeyError:
         error_msg = "La clave GEMINI_API_KEY no está configurada en los secretos de Streamlit."
         logging.error(error_msg)
+        st.error(error_msg)
         return json.dumps({"error": error_msg})
 
     generation_config = {
@@ -34,10 +35,12 @@ def _call_gemini_with_fallback(prompt, image=None):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_UP"},
     ]
     
-    # Lista de modelos refinada para estabilidad. Flash es rápido, Pro es un buen respaldo.
+    # --- ✅ CORRECCIÓN PRINCIPAL ---
+    # Lista de modelos actualizada con nombres válidos y en orden de preferencia.
     model_list = [
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash-latest", # Modelo rápido y eficiente, ideal para esta tarea.
+        "gemini-1.5-pro-latest",   # Modelo más potente como respaldo.
+        "gemini-1.0-pro",          # Modelo estable más antiguo si los otros fallan.
     ]
 
     content = [prompt, image] if image else [prompt]
@@ -56,7 +59,6 @@ def _call_gemini_with_fallback(prompt, image=None):
                 logging.info(f"Respuesta exitosa usando el modelo: {model_name}")
                 return response.text
             
-            # Guardar la razón del bloqueo si la respuesta fue bloqueada
             if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
                 last_error = f"Modelo {model_name} bloqueó la respuesta: {response.prompt_feedback.block_reason}"
                 logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
@@ -65,14 +67,13 @@ def _call_gemini_with_fallback(prompt, image=None):
                 logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
 
         except Exception as e:
-            # --- MEJORA CLAVE: Registrar el error específico ---
             last_error = f"Error de API con el modelo {model_name}: {e}"
             logging.error(f"{last_error}. Intentando con el siguiente modelo.")
             continue
 
-    # Si todos los modelos fallan, devolver el último error conocido
     final_error_msg = f"No se pudo conectar con ningún modelo de IA disponible. Último error: {last_error}"
     logging.error(final_error_msg)
+    st.error(final_error_msg)
     return json.dumps({"error": final_error_msg})
 
 
@@ -121,4 +122,3 @@ def get_best_match_from_attributes(attributes: dict, inventory_names: list):
     2. "reasoning": (string) Una frase corta explicando tu elección.
     """
     return _call_gemini_with_fallback(prompt)
-
