@@ -1,124 +1,230 @@
 import google.generativeai as genai
-from PIL import Image
-import streamlit as st
-import json
 import logging
+import os
+from typing import Optional, Dict, Any
+import json
 
-# Configurar logging para una mejor depuración
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def _call_gemini_with_fallback(prompt, image=None):
-    """
-    Función interna para llamar a la API de Gemini con una lista de modelos,
-    fallback automático y registro de errores detallado.
-    """
-    last_error = None
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=api_key)
-    except KeyError:
-        error_msg = "La clave GEMINI_API_KEY no está configurada en los secretos de Streamlit."
-        logging.error(error_msg)
-        st.error(error_msg)
-        return json.dumps({"error": error_msg})
+class GeminiUtils:
+    def __init__(self):
+        """Inicializar la clase GeminiUtils con configuración optimizada."""
+        self.api_key = os.getenv('GEMINI_API_KEY')
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY no encontrada en las variables de entorno")
+        
+        # Configurar la API
+        genai.configure(api_key=self.api_key)
+        
+        # Modelos disponibles ordenados por prioridad (más estables primero)
+        self.models = [
+            "gemini-1.5-flash-002",
+            "gemini-1.5-flash-8b", 
+            "gemini-1.5-flash",
+            "gemini-1.5-pro-002",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro"
+        ]
+        
+        self.current_model = None
+        self.model_config = {
+            "temperature": 0.1,
+            "top_p": 0.8,
+            "top_k": 20,
+            "max_output_tokens": 2048,
+            "response_mime_type": "text/plain"
+        }
+        
+        # Configuración de seguridad más permisiva
+        self.safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH", 
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            }
+        ]
 
-    generation_config = {
-        "temperature": 0.4,
-        "top_p": 1.0,
-        "top_k": 32,
-        "max_output_tokens": 4096,
-    }
-    safety_settings = [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_UP"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_UP"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_UP"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_UP"},
-    ]
-    
-    # --- ✅ CORRECCIÓN PRINCIPAL ---
-    # Lista de modelos actualizada con nombres válidos y en orden de preferencia.
-    model_list = [
-        "gemini-1.5-flash-latest", # Modelo rápido y eficiente, ideal para esta tarea.
-        "gemini-1.5-pro-latest",   # Modelo más potente como respaldo.
-        "gemini-1.0-pro",          # Modelo estable más antiguo si los otros fallan.
-    ]
+    def get_available_model(self) -> Optional[str]:
+        """Obtener un modelo disponible de la lista."""
+        for model_name in self.models:
+            try:
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    generation_config=self.model_config,
+                    safety_settings=self.safety_settings
+                )
+                # Probar el modelo con una consulta simple
+                response = model.generate_content("Hola")
+                if response.text:
+                    logger.info(f"Modelo {model_name} disponible y funcionando")
+                    self.current_model = model_name
+                    return model_name
+            except Exception as e:
+                logger.warning(f"Modelo {model_name} no disponible: {str(e)}")
+                continue
+        
+        return None
 
-    content = [prompt, image] if image else [prompt]
-
-    for model_name in model_list:
+    def generate_content(self, prompt: str, image_data: Optional[bytes] = None) -> Dict[str, Any]:
+        """
+        Generar contenido usando Gemini AI.
+        
+        Args:
+            prompt (str): Texto del prompt
+            image_data (Optional[bytes]): Datos de imagen si es necesario
+            
+        Returns:
+            Dict[str, Any]: Respuesta del modelo o error
+        """
         try:
+            # Asegurar que tenemos un modelo disponible
+            if not self.current_model:
+                model_name = self.get_available_model()
+                if not model_name:
+                    return {
+                        "success": False,
+                        "error": "No hay modelos de IA disponibles",
+                        "response": None
+                    }
+
+            # Crear el modelo
             model = genai.GenerativeModel(
-                model_name=model_name,
-                generation_config=generation_config,
-                safety_settings=safety_settings
+                model_name=self.current_model,
+                generation_config=self.model_config,
+                safety_settings=self.safety_settings
             )
+
+            # Preparar el contenido
+            content_parts = [prompt]
+            if image_data:
+                content_parts.append({
+                    "mime_type": "image/jpeg",
+                    "data": image_data
+                })
+
+            # Generar respuesta
+            response = model.generate_content(content_parts)
             
-            response = model.generate_content(content)
-            
-            if response.parts:
-                logging.info(f"Respuesta exitosa usando el modelo: {model_name}")
-                return response.text
-            
-            if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
-                last_error = f"Modelo {model_name} bloqueó la respuesta: {response.prompt_feedback.block_reason}"
-                logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
+            # Verificar si la respuesta fue bloqueada
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                logger.warning(f"Respuesta bloqueada: {response.prompt_feedback.block_reason}")
+                return {
+                    "success": False,
+                    "error": f"Contenido bloqueado: {response.prompt_feedback.block_reason}",
+                    "response": None
+                }
+
+            if response.candidates and response.candidates[0].finish_reason == "SAFETY":
+                logger.warning("Respuesta bloqueada por filtros de seguridad")
+                return {
+                    "success": False,
+                    "error": "Respuesta bloqueada por filtros de seguridad",
+                    "response": None
+                }
+
+            if response.text:
+                return {
+                    "success": True,
+                    "error": None,
+                    "response": response.text.strip(),
+                    "model_used": self.current_model
+                }
             else:
-                last_error = f"El modelo {model_name} no devolvió contenido."
-                logging.warning(f"{last_error}. Intentando con el siguiente modelo.")
+                return {
+                    "success": False,
+                    "error": "No se generó respuesta válida",
+                    "response": None
+                }
 
         except Exception as e:
-            last_error = f"Error de API con el modelo {model_name}: {e}"
-            logging.error(f"{last_error}. Intentando con el siguiente modelo.")
-            continue
+            error_msg = str(e)
+            logger.error(f"Error de API con el modelo {self.current_model}: {error_msg}")
+            
+            # Intentar con el siguiente modelo
+            if self.current_model in self.models:
+                current_index = self.models.index(self.current_model)
+                if current_index < len(self.models) - 1:
+                    self.current_model = self.models[current_index + 1]
+                    logger.info(f"Intentando con el siguiente modelo: {self.current_model}")
+                    return self.generate_content(prompt, image_data)
+            
+            return {
+                "success": False,
+                "error": f"No se pudo conectar con ningún modelo de IA disponible. Último error: {error_msg}",
+                "response": None
+            }
 
-    final_error_msg = f"No se pudo conectar con ningún modelo de IA disponible. Último error: {last_error}"
-    logging.error(final_error_msg)
-    st.error(final_error_msg)
-    return json.dumps({"error": final_error_msg})
-
-
-def get_image_attributes(image: Image.Image):
-    """
-    Paso 1: Actúa como el "Ojo". Extrae atributos visuales de la imagen.
-    """
-    prompt = """
-    Analiza la imagen de este objeto y proporciona sus atributos. Responde únicamente con un objeto JSON válido.
-    El objeto JSON debe tener las siguientes claves:
-    - "main_object": (string) El nombre genérico del objeto principal (ej: "taza", "teclado").
-    - "main_color": (string) El color dominante del objeto.
-    - "secondary_colors": (array of strings) Otros colores presentes.
-    - "shape": (string) La forma principal (ej: "cilíndrica", "rectangular").
-    - "material": (string) Tu mejor suposición sobre el material (ej: "plástico", "metal", "cerámica").
-    - "features": (array of strings) Características visuales notables (ej: "tiene un asa", "con logo", "teclas negras").
-    Asegúrate de que el JSON sea sintácticamente correcto.
-    """
-    return _call_gemini_with_fallback(prompt, image=image)
-
-
-def get_best_match_from_attributes(attributes: dict, inventory_names: list):
-    """
-    Paso 2: Actúa como el "Cerebro Logístico". Encuentra la mejor coincidencia en el inventario.
-    """
-    if not inventory_names:
-        return json.dumps({"best_match": "Artículo no encontrado", "reasoning": "El inventario está vacío."})
+    def analyze_inventory_item(self, item_description: str, image_data: Optional[bytes] = None) -> Dict[str, Any]:
+        """
+        Analizar un elemento del inventario.
         
-    attributes_json_string = json.dumps(attributes, indent=2)
+        Args:
+            item_description (str): Descripción del elemento
+            image_data (Optional[bytes]): Imagen del elemento
+            
+        Returns:
+            Dict[str, Any]: Análisis del elemento
+        """
+        prompt = f"""
+        Analiza este elemento del inventario y proporciona información detallada:
+        
+        Descripción: {item_description}
+        
+        Por favor, proporciona:
+        1. Nombre del producto
+        2. Categoría
+        3. Estado (nuevo, usado, dañado, etc.)
+        4. Material principal
+        5. Estimación de valor
+        6. Recomendaciones de almacenamiento
+        7. Código de barras o número de serie si es visible
+        
+        Responde en formato JSON estructurado.
+        """
+        
+        return self.generate_content(prompt, image_data)
 
-    prompt = f"""
-    Eres un experto en logística de inventarios. Tu tarea es encontrar la mejor coincidencia para un objeto basado en sus atributos observados.
-    
-    Atributos observados del objeto:
-    ```json
-    {attributes_json_string}
-    ```
+    def get_model_info(self) -> Dict[str, Any]:
+        """Obtener información sobre el modelo actual."""
+        return {
+            "current_model": self.current_model,
+            "available_models": self.models,
+            "config": self.model_config,
+            "safety_settings": self.safety_settings
+        }
 
-    Mi lista de inventario actual:
-    - {"\n- ".join(inventory_names)}
-
-    Basado en los atributos observados, ¿cuál de los artículos de mi lista de inventario es la coincidencia más probable?
-    
-    Responde únicamente con un objeto JSON válido que contenga dos claves:
-    1. "best_match": (string) El nombre exacto del artículo de la lista. Si no hay coincidencia, usa "Artículo no encontrado".
-    2. "reasoning": (string) Una frase corta explicando tu elección.
+# Función de utilidad para uso directo
+def get_gemini_response(prompt: str, image_data: Optional[bytes] = None) -> Dict[str, Any]:
     """
-    return _call_gemini_with_fallback(prompt)
+    Función de conveniencia para obtener respuesta de Gemini.
+    
+    Args:
+        prompt (str): Texto del prompt
+        image_data (Optional[bytes]): Datos de imagen
+        
+    Returns:
+        Dict[str, Any]: Respuesta del modelo
+    """
+    try:
+        gemini = GeminiUtils()
+        return gemini.generate_content(prompt, image_data)
+    except Exception as e:
+        logger.error(f"Error inicializando Gemini: {str(e)}")
+        return {
+            "success": False,
+            "error": f"Error inicializando Gemini: {str(e)}",
+            "response": None
+        }
