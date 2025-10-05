@@ -2,7 +2,6 @@ import streamlit as st
 import logging
 from gemini_utils import GeminiUtils, get_gemini_response
 from firebase_utils import FirebaseUtils
-import os
 from PIL import Image
 import io
 import pandas as pd
@@ -29,6 +28,25 @@ def main():
     st.title("🤖 Sistema de Reconocimiento de Inventario con IA")
     st.markdown("---")
     
+    # Verificar que los secrets estén configurados
+    try:
+        # Verificar GEMINI_API_KEY
+        gemini_key = st.secrets["GEMINI_API_KEY"]
+        if not gemini_key:
+            st.error("❌ GEMINI_API_KEY no configurada en Streamlit secrets")
+            return
+        
+        # Verificar FIREBASE_SERVICE_ACCOUNT_BASE64
+        firebase_secret = st.secrets["FIREBASE_SERVICE_ACCOUNT_BASE64"]
+        if not firebase_secret:
+            st.error("❌ FIREBASE_SERVICE_ACCOUNT_BASE64 no configurada en Streamlit secrets")
+            return
+            
+    except KeyError as e:
+        st.error(f"❌ Secret no encontrado: {str(e)}")
+        st.info("💡 Configura tus secrets en la sección 'Secrets' de tu aplicación Streamlit")
+        return
+    
     # Inicializar Firebase
     try:
         firebase = FirebaseUtils()
@@ -48,6 +66,7 @@ def main():
             st.header("🔧 Información del Sistema")
             st.write(f"**Modelo actual:** {model_info['current_model']}")
             st.write(f"**Modelos disponibles:** {len(model_info['available_models'])}")
+            st.write(f"**Proyecto Firebase:** {firebase.project_id}")
             
     except Exception as e:
         st.error(f"❌ Error inicializando Gemini AI: {str(e)}")
@@ -252,14 +271,22 @@ def main():
             st.error(f"❌ Error obteniendo información del modelo: {str(e)}")
         
         # Variables de entorno
-        st.subheader("🔧 Variables de Entorno")
-        env_vars = {
-            "GEMINI_API_KEY": "✅ Configurada" if os.getenv('GEMINI_API_KEY') else "❌ No configurada",
-            "FIREBASE_PROJECT_ID": "✅ Configurada" if os.getenv('FIREBASE_PROJECT_ID') else "❌ No configurada"
+        st.subheader("🔧 Streamlit Secrets")
+        secrets_status = {
+            "GEMINI_API_KEY": "✅ Configurada" if st.secrets.get("GEMINI_API_KEY") else "❌ No configurada",
+            "FIREBASE_SERVICE_ACCOUNT_BASE64": "✅ Configurada" if st.secrets.get("FIREBASE_SERVICE_ACCOUNT_BASE64") else "❌ No configurada"
         }
         
-        for var, status in env_vars.items():
-            st.write(f"**{var}:** {status}")
+        for secret, status in secrets_status.items():
+            st.write(f"**{secret}:** {status}")
+        
+        # Información del proyecto Firebase
+        st.subheader("🔥 Información de Firebase")
+        try:
+            st.write(f"**Proyecto ID:** {firebase.project_id}")
+            st.write("**Estado de conexión:** ✅ Conectado")
+        except Exception as e:
+            st.write(f"**Estado de conexión:** ❌ Error: {str(e)}")
         
         # Botón para probar conexiones
         if st.button("🧪 Probar Conexiones"):
