@@ -129,7 +129,7 @@ elif page == "📸 Análisis de Imagen":
                             with st.spinner("Guardando..."):
                                 data_to_save = {
                                     "custom_id": custom_id,
-                                    "name": description,
+                                    "name": description, # 'name' para compatibilidad con el listado
                                     "quantity": quantity,
                                     "tipo": "imagen" if hasattr(st.session_state, 'last_image_name') else "camera",
                                     "analisis_ia": analysis_data,
@@ -321,4 +321,3 @@ elif page == "👥 Acerca de":
             st.title("Jhon Alejandro Mojica")
             st.subheader("_Profesor y Tutor del Proyecto_")
             st.markdown("- 📧 **Email:** [jhon.mojica@uniminuto.edu.co](mailto:jhon.mojica@uniminuto.edu.co)")
-
