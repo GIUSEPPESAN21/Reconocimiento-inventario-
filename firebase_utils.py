@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class FirebaseUtils:
     def __init__(self):
         self.db = None
-        self.project_id = "reconocimiento-inventario" # Asegúrate que este sea tu Project ID
+        self.project_id = "reconocimiento-inventario"
         self._initialize_firebase()
     
     def _initialize_firebase(self):
@@ -23,6 +23,10 @@ class FirebaseUtils:
                 if not creds_base64:
                     raise ValueError("El secret 'FIREBASE_SERVICE_ACCOUNT_BASE64' no fue encontrado.")
                 
+                missing_padding = len(creds_base64) % 4
+                if missing_padding:
+                    creds_base64 += '=' * (4 - missing_padding)
+
                 creds_json_str = base64.b64decode(creds_base64).decode('utf-8')
                 creds_dict = json.loads(creds_json_str)
                 
@@ -33,16 +37,19 @@ class FirebaseUtils:
             self.db = firestore.client()
         except Exception as e:
             logger.error(f"Error fatal al inicializar Firebase: {e}")
-            raise  # Relanza la excepción para que Streamlit la muestre
+            raise
 
     def get_timestamp(self):
         """Retorna el timestamp actual en formato ISO."""
         return datetime.now().isoformat()
 
     def save_inventory_item(self, data):
-        """Guarda un nuevo elemento en la colección 'inventario'."""
+        """Guarda un nuevo elemento en la colección 'inventory'."""
         try:
-            _, doc_ref = self.db.collection('inventario').add(data)
+            data_to_save = {'name': data.get('descripcion', 'Sin nombre')}
+            data_to_save.update(data)
+            
+            _, doc_ref = self.db.collection('inventory').add(data_to_save)
             logger.info(f"Elemento guardado con ID: {doc_ref.id}")
             return doc_ref.id
         except Exception as e:
@@ -50,9 +57,9 @@ class FirebaseUtils:
             raise
 
     def get_all_inventory_items(self):
-        """Obtiene todos los elementos del inventario, ordenados por fecha."""
+        """Obtiene todos los elementos de la colección 'inventory'."""
         try:
-            docs = self.db.collection('inventario').order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
+            docs = self.db.collection('inventory').stream()
             items = []
             for doc in docs:
                 item = doc.to_dict()
@@ -64,9 +71,9 @@ class FirebaseUtils:
             return []
 
     def delete_inventory_item(self, doc_id):
-        """Elimina un elemento por su ID de documento."""
+        """Elimina un elemento de la colección 'inventory'."""
         try:
-            self.db.collection('inventario').document(doc_id).delete()
+            self.db.collection('inventory').document(doc_id).delete()
             logger.info(f"Elemento {doc_id} eliminado.")
         except Exception as e:
             logger.error(f"Error al eliminar de Firestore: {e}")
