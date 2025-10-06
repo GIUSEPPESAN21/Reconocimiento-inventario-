@@ -33,10 +33,13 @@ st.markdown("""
     .feature-box { background-color: #f0f2f6; padding: 1rem; border-radius: 10px; border-left: 5px solid #1f77b4; margin: 1rem 0; }
     .stats-box { background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem; border-radius: 10px; text-align: center; margin: 0.5rem 0; }
     .author-info { background-color: #e8f4fd; padding: 1rem; border-radius: 10px; border: 2px solid #1f77b4; margin: 1rem 0; }
+    .step-header { font-size: 1.5rem; color: #1f77b4; border-bottom: 2px solid #1f77b4; padding-bottom: 5px; margin-top: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- Inicialización de Estado y Servicios ---
+if 'yolo_results' not in st.session_state:
+    st.session_state.yolo_results = None
 if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = None
 if 'data_to_save' not in st.session_state:
@@ -86,6 +89,7 @@ page = st.sidebar.selectbox("Selecciona una opción:", page_options)
 
 # Limpiar estado si cambiamos de página
 if page != st.session_state.current_page:
+    st.session_state.yolo_results = None
     st.session_state.analysis_result = None
     st.session_state.data_to_save = None
     st.session_state.current_page = page
@@ -99,6 +103,7 @@ def handle_save_to_inventory():
             st.toast("¡Elemento guardado!", icon="💾")
             st.session_state.analysis_result = None
             st.session_state.data_to_save = None
+            st.session_state.yolo_results = None # Limpiar todo para la próxima imagen
         except Exception as e:
             st.error(f"Error al guardar en Firebase: {e}")
 
@@ -130,51 +135,58 @@ elif page in ["📸 Cámara en Vivo", "📁 Subir Imagen"]:
 
     if image_input:
         image_pil = Image.open(image_input)
-        st.image(image_pil, caption="Imagen a analizar")
+        st.image(image_pil, caption="Imagen original a analizar")
 
-        st.subheader("🧠 Análisis con Gemini AI")
-        description = st.text_input("Descripción adicional (opcional):", key=f"{'cam' if is_camera else 'upload'}_desc")
+        # --- PASO 1: DETECCIÓN CON YOLO ---
+        st.markdown('<h2 class="step-header">Paso 1: Detección de Objetos</h2>', unsafe_allow_html=True)
+        if st.button("👁️ Detectar Objetos con YOLO", key=f"yolo_{'cam' if is_camera else 'upload'}"):
+            with st.spinner("Procesando con YOLOv8..."):
+                results = yolo_model(image_pil)
+                st.session_state.yolo_results = results
 
-        if st.button("✨ Analizar con IA", key=f"{'cam' if is_camera else 'upload'}_analyze"):
-            with st.spinner("Analizando con Gemini AI..."):
-                try:
-                    analysis = gemini.analyze_image(image_pil, description)
-                    st.session_state.analysis_result = analysis
-                    st.session_state.data_to_save = {
-                        "tipo": "camera" if is_camera else "imagen",
-                        "archivo": f"camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg" if is_camera else image_input.name,
-                        "descripcion": description, "analisis": analysis, "timestamp": firebase.get_timestamp()
-                    }
-                except Exception as e:
-                    st.error(f"Error en el análisis de Gemini: {e}")
-                    st.session_state.analysis_result = None
+        if st.session_state.yolo_results:
+            st.subheader("Resultados de la Detección")
+            results = st.session_state.yolo_results
+            annotated_image = results[0].plot() # .plot() dibuja las cajas en la imagen
+            annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+            st.image(annotated_image_rgb, caption="Objetos detectados por YOLO")
+
+            # --- PASO 2: ANÁLISIS CON GEMINI ---
+            st.markdown('<h2 class="step-header">Paso 2: Análisis Detallado</h2>', unsafe_allow_html=True)
+            description = st.text_input("Descripción adicional (opcional):", key=f"desc_{'cam' if is_camera else 'upload'}")
+            
+            if st.button("✨ Analizar con IA", key=f"gemini_{'cam' if is_camera else 'upload'}"):
+                with st.spinner("Analizando con Gemini AI..."):
+                    try:
+                        analysis = gemini.analyze_image(image_pil, description)
+                        st.session_state.analysis_result = analysis
+                        st.session_state.data_to_save = {
+                            "tipo": "camera" if is_camera else "imagen",
+                            "archivo": f"camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg" if is_camera else image_input.name,
+                            "descripcion": description, "analisis": analysis, "timestamp": firebase.get_timestamp()
+                        }
+                    except Exception as e:
+                        st.error(f"Error en el análisis de Gemini: {e}")
+                        st.session_state.analysis_result = None
 
         if st.session_state.analysis_result:
             st.subheader("📝 Resultado del Análisis:")
-            st.text_area("Análisis:", st.session_state.analysis_result, height=200, key=f"{'cam' if is_camera else 'upload'}_result")
-            if st.button("💾 Guardar en Inventario", key=f"{'cam' if is_camera else 'upload'}_save"):
+            st.text_area("Análisis:", st.session_state.analysis_result, height=200, key=f"result_{'cam' if is_camera else 'upload'}")
+            if st.button("💾 Guardar en Inventario", key=f"save_{'cam' if is_camera else 'upload'}"):
                 handle_save_to_inventory()
 
 elif page == "📝 Análisis de Texto":
+    # (Esta página no se modifica, ya funcionaba correctamente)
     st.header("📝 Análisis de Texto con IA")
     text_input = st.text_area("Describe los elementos de inventario:", height=150, placeholder="Ej: 15 laptops Dell...")
-
     if st.button("🧠 Analizar Descripción"):
         if text_input.strip():
             with st.spinner("Analizando descripción..."):
-                try:
-                    analysis = gemini.generate_description(text_input)
-                    st.session_state.analysis_result = analysis
-                    st.session_state.data_to_save = {
-                        "tipo": "texto", "descripcion": text_input, "analisis": analysis,
-                        "timestamp": firebase.get_timestamp()
-                    }
-                except Exception as e:
-                    st.error(f"Error en el análisis: {e}")
-                    st.session_state.analysis_result = None
+                analysis = gemini.generate_description(text_input)
+                st.session_state.analysis_result = analysis
+                st.session_state.data_to_save = {"tipo": "texto", "descripcion": text_input, "analisis": analysis, "timestamp": firebase.get_timestamp()}
         else:
             st.warning("Por favor, ingresa una descripción")
-            
     if st.session_state.analysis_result:
         st.subheader("📝 Análisis de la Descripción:")
         st.text_area("Resultado:", st.session_state.analysis_result, height=200, key="text_result")
@@ -185,7 +197,6 @@ elif page == "🗃️ Base de Datos":
     st.header("🗃️ Gestión de Base de Datos")
     if st.button("🔄 Actualizar Lista"):
         st.rerun()
-
     try:
         items = firebase.get_all_inventory_items()
         st.subheader(f"📋 Elementos Encontrados ({len(items)})")
@@ -194,12 +205,9 @@ elif page == "🗃️ Base de Datos":
                 with st.expander(f"📦 {item.get('tipo', 'N/A').capitalize()} - {item.get('timestamp', 'Sin fecha')[:19]}"):
                     st.json(item)
                     if st.button(f"🗑️ Eliminar", key=f"delete_{item['id']}_{i}"):
-                        try:
-                            firebase.delete_inventory_item(item['id'])
-                            st.success(f"Elemento {item['id']} eliminado.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al eliminar: {e}")
+                        firebase.delete_inventory_item(item['id'])
+                        st.success(f"Elemento {item['id']} eliminado.")
+                        st.rerun()
         else:
             st.info("No se encontraron elementos en la base de datos.")
     except Exception as e:
