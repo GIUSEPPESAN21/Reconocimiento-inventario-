@@ -1,248 +1,176 @@
 import streamlit as st
-import os
 from PIL import Image
 import numpy as np
 import cv2
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-import logging
-import platform
-import sys
 import json
+from collections import Counter
 
-from ultralytics import YOLO
+# Importa las nuevas clases que creaste
 from firebase_utils import FirebaseUtils
 from gemini_utils import GeminiUtils
+from ultralytics import YOLO
 
-# --- Configuración Inicial ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Sistema de Reconocimiento de Inventario con IA",
-    page_icon="📦",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Inventario Inteligente Híbrido",
+    page_icon="🤖",
+    layout="wide"
 )
 
-# --- CSS (del repositorio original) ---
-st.markdown("""
-<style>
-    .main-header { font-size: 3rem; color: #1f77b4; text-align: center; margin-bottom: 2rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
-    .feature-box { background-color: #f0f2f6; padding: 1rem; border-radius: 10px; border-left: 5px solid #1f77b4; margin: 1rem 0; }
-    .stats-box { background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem; border-radius: 10px; text-align: center; margin: 0.5rem 0; }
-    .author-info { background-color: #e8f4fd; padding: 1rem; border-radius: 10px; border: 2px solid #1f77b4; margin: 1rem 0; }
-    .step-header { font-size: 1.5rem; color: #1f77b4; border-bottom: 2px solid #1f77b4; padding-bottom: 5px; margin-top: 20px; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Inicialización de Estado y Servicios ---
-if 'yolo_results' not in st.session_state:
-    st.session_state.yolo_results = None
-if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = None
-if 'data_to_save' not in st.session_state:
-    st.session_state.data_to_save = None
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "🏠 Inicio"
-
-@st.cache_resource
-def load_yolo_model():
-    """Carga el modelo YOLOv8 una sola vez."""
-    try:
-        logger.info("Cargando modelo YOLOv8...")
-        model = YOLO('yolov8m.pt')
-        logger.info("Modelo YOLOv8 cargado.")
-        return model
-    except Exception as e:
-        st.error(f"Error al cargar YOLO: {e}")
-        return None
-
+# --- CARGA DE MODELOS Y CONEXIONES (Método robusto) ---
 @st.cache_resource
 def initialize_services():
-    """Inicializa Firebase y Gemini una sola vez."""
+    """Carga YOLO e inicializa Firebase y Gemini una sola vez."""
     try:
-        firebase = FirebaseUtils()
-        gemini = GeminiUtils()
-        return firebase, gemini
+        yolo_model = YOLO('yolov8m.pt')
+        firebase_handler = FirebaseUtils()
+        gemini_handler = GeminiUtils()
+        return yolo_model, firebase_handler, gemini_handler
     except Exception as e:
-        st.error(f"Error al inicializar servicios. Detalle: {e}")
-        return None, None
+        # Mostramos el error de forma clara si algo falla al inicio
+        st.error(f"**Error Crítico de Inicialización.** No se pudo cargar un modelo o conectar a un servicio.")
+        st.code(f"Detalle del error: {e}", language="bash")
+        return None, None, None
 
-yolo_model = load_yolo_model()
-firebase, gemini = initialize_services()
+# Inicializa todos los servicios
+yolo_model, firebase, gemini = initialize_services()
 
+# Si la inicialización falla, detenemos la app
 if not all([yolo_model, firebase, gemini]):
-    st.error("❌ Faltan servicios clave. La aplicación no puede continuar.")
     st.stop()
 
-# --- Interfaz de Usuario ---
-st.markdown('<h1 class="main-header">🤖 Sistema de Reconocimiento de Inventario con IA</h1>', unsafe_allow_html=True)
+# --- TÍTULO PRINCIPAL Y PESTAÑAS ---
+st.title("🧠 Inventario Inteligente Híbrido")
+tab_inventario, tab_acerca_de = st.tabs(["📷 Reconocimiento de Inventario", "👥 Acerca de Nosotros"])
 
-st.sidebar.title("📋 Navegación")
-page_options = [
-    "🏠 Inicio", "📸 Cámara en Vivo", "📁 Subir Imagen", "📝 Análisis de Texto", 
-    "📊 Dashboard", "🗃️ Base de Datos", "👥 Información del Proyecto", "⚙️ Configuración"
-]
-page = st.sidebar.selectbox("Selecciona una opción:", page_options)
+# --- PESTAÑA PRINCIPAL DE LA APLICACIÓN ---
+with tab_inventario:
+    col1, col2 = st.columns([2, 1])
 
-# Limpiar estado si cambiamos de página
-if page != st.session_state.current_page:
-    st.session_state.yolo_results = None
-    st.session_state.analysis_result = None
-    st.session_state.data_to_save = None
-    st.session_state.current_page = page
-
-# --- Lógica Funcional Centralizada ---
-def handle_save_to_inventory():
-    if st.session_state.data_to_save:
-        try:
-            doc_id = firebase.save_inventory_item(st.session_state.data_to_save)
-            st.success(f"✅ ¡Guardado en inventario con éxito! ID: {doc_id}")
-            st.toast("¡Elemento guardado!", icon="💾")
-            st.session_state.analysis_result = None
-            st.session_state.data_to_save = None
-            st.session_state.yolo_results = None # Limpiar todo para la próxima imagen
-        except Exception as e:
-            st.error(f"Error al guardar en Firebase: {e}")
-
-# --- Páginas de la Aplicación ---
-
-if page == "🏠 Inicio":
-    st.header("🏠 Bienvenido al Sistema de Reconocimiento de Inventario")
-    try:
-        items = firebase.get_all_inventory_items()
-        col1, col2, col3 = st.columns(3)
-        with col1: st.markdown(f'<div class="stats-box"><h3>{len(items)}</h3><p>Total Elementos</p></div>', unsafe_allow_html=True)
-        with col2: st.markdown(f'<div class="stats-box"><h3>{len([i for i in items if i.get("tipo") in ["imagen", "camera"]])}</h3><p>Imágenes Analizadas</p></div>', unsafe_allow_html=True)
-        with col3: st.markdown(f'<div class="stats-box"><h3>{len([i for i in items if i.get("tipo") == "texto"])}</h3><p>Descripciones Procesadas</p></div>', unsafe_allow_html=True)
-    except Exception as e: st.warning(f"Error al cargar estadísticas: {e}")
-    st.subheader("🚀 Características Principales")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown('<div class="feature-box"><h4>📸 Análisis por Cámara en Vivo</h4><p>Captura imágenes para análisis inmediato con YOLO e IA.</p></div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-box"><h4>📁 Subida de Archivos</h4><p>Sube imágenes para un análisis detallado con Gemini AI.</p></div>', unsafe_allow_html=True)
+    # --- PANEL DE CONTROL (COLUMNA 2) ---
     with col2:
-        st.markdown('<div class="feature-box"><h4>📝 Análisis de Texto</h4><p>Describe elementos y obtén un análisis estructurado con IA.</p></div>', unsafe_allow_html=True)
-        st.markdown('<div class="feature-box"><h4>📊 Dashboard Completo</h4><p>Visualiza estadísticas de tu inventario con gráficos interactivos.</p></div>', unsafe_allow_html=True)
+        st.header("📊 Panel de Control")
+        try:
+            with st.spinner("Cargando inventario..."):
+                # Usamos el objeto firebase inicializado para obtener los datos
+                inventory_list = firebase.get_all_inventory_items()
+            inventory_names = [item.get('name', 'Nombre no encontrado') for item in inventory_list]
+        except Exception as e:
+            st.error(f"Error al cargar inventario: {e}")
+            inventory_names = []
 
-elif page in ["📸 Cámara en Vivo", "📁 Subir Imagen"]:
-    is_camera = page == "📸 Cámara en Vivo"
-    st.header(f"📸 Análisis con {'Cámara en Vivo' if is_camera else 'Imagen Subida'}")
-    
-    image_input = st.camera_input("📷 Toma una foto") if is_camera else st.file_uploader("Sube una imagen", type=['png', 'jpg', 'jpeg'])
+        with st.expander("➕ Añadir Nuevo Artículo", expanded=True):
+            new_item_name = st.text_input("Nombre del artículo", key="add_item_input")
+            if st.button("Guardar en Firebase", use_container_width=True):
+                if new_item_name and new_item_name.strip() and new_item_name.strip() not in inventory_names:
+                    # Creamos el diccionario de datos que tu nueva función espera
+                    data_to_save = {
+                        "tipo": "manual",
+                        "descripcion": new_item_name.strip(),
+                        "analisis": "N/A",
+                        "timestamp": firebase.get_timestamp()
+                    }
+                    firebase.save_inventory_item(data_to_save)
+                    st.success(f"'{new_item_name.strip()}' añadido.")
+                    st.rerun()
+                else:
+                    st.warning("El nombre no puede estar vacío o ya existe.")
 
-    if image_input:
-        image_pil = Image.open(image_input)
-        st.image(image_pil, caption="Imagen original a analizar")
+        st.subheader("📋 Inventario Actual")
+        if inventory_names:
+            st.dataframe([name for name in inventory_names if name != 'Nombre no encontrado'], use_container_width=True, column_config={"value": "Artículo"})
+        else:
+            st.info("Inventario vacío o no se pudo cargar.")
+        
+        st.subheader("✔️ Resultado del Análisis")
+        if 'analysis_result' in st.session_state:
+            st.success("Análisis completado:")
+            st.json(st.session_state.analysis_result)
+        else:
+            st.info("Selecciona un objeto para analizarlo.")
 
-        # --- PASO 1: DETECCIÓN CON YOLO ---
-        st.markdown('<h2 class="step-header">Paso 1: Detección de Objetos</h2>', unsafe_allow_html=True)
-        if st.button("👁️ Detectar Objetos con YOLO", key=f"yolo_{'cam' if is_camera else 'upload'}"):
-            with st.spinner("Procesando con YOLOv8..."):
-                results = yolo_model(image_pil)
-                st.session_state.yolo_results = results
+    # --- CAPTURA Y ANÁLISIS (COLUMNA 1) ---
+    with col1:
+        st.header("📷 Captura y Detección")
+        img_buffer = st.camera_input("Apunta la cámara a los objetos", key="camera")
 
-        if st.session_state.yolo_results:
-            st.subheader("Resultados de la Detección")
-            results = st.session_state.yolo_results
-            annotated_image = results[0].plot() # .plot() dibuja las cajas en la imagen
-            annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
-            st.image(annotated_image_rgb, caption="Objetos detectados por YOLO")
-
-            # --- PASO 2: ANÁLISIS CON GEMINI ---
-            st.markdown('<h2 class="step-header">Paso 2: Análisis Detallado</h2>', unsafe_allow_html=True)
-            description = st.text_input("Descripción adicional (opcional):", key=f"desc_{'cam' if is_camera else 'upload'}")
+        if img_buffer:
+            bytes_data = img_buffer.getvalue()
+            cv_image = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+            pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
             
-            if st.button("✨ Analizar con IA", key=f"gemini_{'cam' if is_camera else 'upload'}"):
-                with st.spinner("Analizando con Gemini AI..."):
-                    try:
-                        analysis = gemini.analyze_image(image_pil, description)
-                        st.session_state.analysis_result = analysis
-                        st.session_state.data_to_save = {
-                            "tipo": "camera" if is_camera else "imagen",
-                            "archivo": f"camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg" if is_camera else image_input.name,
-                            "descripcion": description, "analisis": analysis, "timestamp": firebase.get_timestamp()
-                        }
-                    except Exception as e:
-                        st.error(f"Error en el análisis de Gemini: {e}")
-                        st.session_state.analysis_result = None
+            with st.spinner("🧠 Detectando objetos con IA local (YOLO)..."):
+                results = yolo_model(pil_image)
 
-        if st.session_state.analysis_result:
-            st.subheader("📝 Resultado del Análisis:")
-            st.text_area("Análisis:", st.session_state.analysis_result, height=200, key=f"result_{'cam' if is_camera else 'upload'}")
-            if st.button("💾 Guardar en Inventario", key=f"save_{'cam' if is_camera else 'upload'}"):
-                handle_save_to_inventory()
+            st.subheader("🔍 Objetos Detectados")
+            annotated_image = results[0].plot()
+            annotated_image_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
+            st.image(annotated_image_rgb, caption="Imagen con objetos detectados por YOLO.", use_container_width=True)
 
-elif page == "📝 Análisis de Texto":
-    # (Esta página no se modifica, ya funcionaba correctamente)
-    st.header("📝 Análisis de Texto con IA")
-    text_input = st.text_area("Describe los elementos de inventario:", height=150, placeholder="Ej: 15 laptops Dell...")
-    if st.button("🧠 Analizar Descripción"):
-        if text_input.strip():
-            with st.spinner("Analizando descripción..."):
-                analysis = gemini.generate_description(text_input)
-                st.session_state.analysis_result = analysis
-                st.session_state.data_to_save = {"tipo": "texto", "descripcion": text_input, "analisis": analysis, "timestamp": firebase.get_timestamp()}
-        else:
-            st.warning("Por favor, ingresa una descripción")
-    if st.session_state.analysis_result:
-        st.subheader("📝 Análisis de la Descripción:")
-        st.text_area("Resultado:", st.session_state.analysis_result, height=200, key="text_result")
-        if st.button("💾 Guardar Análisis", key="text_save"):
-            handle_save_to_inventory()
+            detections = results[0]
+            st.subheader("▶️ Analizar un objeto en detalle")
 
-elif page == "🗃️ Base de Datos":
-    st.header("🗃️ Gestión de Base de Datos")
-    if st.button("🔄 Actualizar Lista"):
-        st.rerun()
-    try:
-        items = firebase.get_all_inventory_items()
-        st.subheader(f"📋 Elementos Encontrados ({len(items)})")
-        if items:
-            for i, item in enumerate(items):
-                with st.expander(f"📦 {item.get('tipo', 'N/A').capitalize()} - {item.get('timestamp', 'Sin fecha')[:19]}"):
-                    st.json(item)
-                    if st.button(f"🗑️ Eliminar", key=f"delete_{item['id']}_{i}"):
-                        firebase.delete_inventory_item(item['id'])
-                        st.success(f"Elemento {item['id']} eliminado.")
-                        st.rerun()
-        else:
-            st.info("No se encontraron elementos en la base de datos.")
-    except Exception as e:
-        st.error(f"Error al cargar inventario: {e}")
+            if not detections.boxes:
+                st.info("No se detectó ningún objeto para analizar.")
+            else:
+                for i, box in enumerate(detections.boxes):
+                    class_name = detections.names[box.cls[0].item()]
+                    if st.button(f"Analizar '{class_name}' #{i+1}", key=f"classify_{i}", use_container_width=True):
+                        # Recortar la imagen original de PIL para el análisis de Gemini
+                        coords = box.xyxy[0].cpu().numpy().astype(int)
+                        x1, y1, x2, y2 = coords
+                        cropped_pil_image = pil_image.crop((x1, y1, x2, y2))
+                        
+                        st.image(cropped_pil_image, caption=f"Recorte de '{class_name}' enviado para análisis...")
 
-elif page == "📊 Dashboard":
-    st.header("📊 Dashboard de Inventario")
-    try:
-        items = firebase.get_all_inventory_items()
-        if items:
-            df = pd.DataFrame(items)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            st.subheader("📊 Distribución por Tipo")
-            type_counts = df['tipo'].value_counts()
-            fig_pie = px.pie(type_counts, values=type_counts.values, names=type_counts.index, title="Distribución de Elementos")
-            st.plotly_chart(fig_pie, use_container_width=True)
-            st.subheader("🕒 Elementos Recientes")
-            st.dataframe(df[['tipo', 'descripcion', 'timestamp']].head(10))
-        else:
-            st.info("No hay elementos para mostrar estadísticas.")
-    except Exception as e: st.error(f"Error al cargar dashboard: {e}")
+                        with st.spinner(f"🤖 Gemini está analizando el recorte..."):
+                            # Usamos el objeto gemini inicializado
+                            analysis_text = gemini.analyze_image(cropped_pil_image, f"Objeto detectado como {class_name}")
+                            try:
+                                # Guardamos el JSON resultante en el estado de la sesión
+                                st.session_state.analysis_result = json.loads(analysis_text)
+                            except json.JSONDecodeError:
+                                st.session_state.analysis_result = {"error": "La respuesta de la IA no fue un JSON válido.", "raw_response": analysis_text}
+                            st.rerun()
 
-elif page == "👥 Información del Proyecto":
-    st.header("👥 Información del Proyecto")
-    st.markdown('<div class="author-info"><h4>🎓 Desarrollador Principal</h4><p><strong>Nombre:</strong> Giuseppe Sánchez</p><p><strong>Universidad:</strong> Uniminuto</p><p><strong>Programa:</strong> Ingeniería de Sistemas</p><p><strong>Año:</strong> 2025</p></div>', unsafe_allow_html=True)
-    st.subheader("🔧 Tecnologías Utilizadas")
-    st.markdown("- **Streamlit**\n- **Google Gemini AI**\n- **YOLOv8**\n- **Firebase Firestore**")
+# --- PESTAÑA "ACERCA DE" ---
+with tab_acerca_de:
+    st.header("👥 Sobre el Proyecto y sus Creadores")
+    
+    with st.container(border=True):
+        col_img_est, col_info_est = st.columns([1, 3])
+        with col_img_est:
+            st.image("https://placehold.co/250x250/000000/FFFFFF?text=J.S.", caption="Joseph Javier Sánchez Acuña")
+        with col_info_est:
+            st.title("Joseph Javier Sánchez Acuña")
+            st.subheader("_Estudiante de Ingeniería Industrial_")
+            st.subheader("_Experto en Inteligencia Artificial y Desarrollo de Software._")
+            st.markdown(
+                """
+                - 🔗 **LinkedIn:** [joseph-javier-sánchez-acuña](https://www.linkedin.com/in/joseph-javier-sánchez-acuña-150410275)
+                - 📂 **GitHub:** [GIUSEPPESAN21](https://github.com/GIUSEPPESAN21)
+                - 📧 **Email:** [joseph.sanchez@uniminuto.edu.co](mailto:joseph.sanchez@uniminuto.edu.co)
+                """
+            )
+    
+    st.markdown("---")
 
-elif page == "⚙️ Configuración":
-    st.header("⚙️ Configuración y Estado del Sistema")
-    st.subheader("✔️ Estado de los Servicios")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Firebase", "✅ Conectado" if firebase else "❌ Error")
-    col2.metric("Gemini AI", "✅ Conectado" if gemini else "❌ Error")
-    col3.metric("YOLOv8", "✅ Cargado" if yolo_model else "❌ Error")
-    st.subheader("💻 Información del Sistema")
-    st.info(f"**Python:** {sys.version.split()[0]} | **Streamlit:** {st.__version__} | **OS:** {platform.system()}")
+    with st.container(border=True):
+        col_img_prof, col_info_prof = st.columns([1, 3])
+        with col_img_prof:
+            st.image("https://placehold.co/250x250/2B3137/FFFFFF?text=J.M.", caption="Jhon Alejandro Mojica")
+        with col_info_prof:
+            st.title("Jhon Alejandro Mojica")
+            st.subheader("_Profesor y Tutor del Proyecto_")
+            st.markdown("- 📧 **Email:** [jhon.mojica@uniminuto.edu.co](mailto:jhon.mojica@uniminuto.edu.co)")
+
+    st.markdown("---")
+
+    with st.container(border=True):
+        st.subheader("💡 Acerca de esta Herramienta")
+        st.markdown("""
+        Esta aplicación es una solución avanzada para la gestión inteligente de inventarios. 
+        Utiliza un modelo híbrido de IA que combina la detección de objetos en tiempo real (**YOLO**) 
+        con el análisis profundo de imágenes (**Google Gemini**), todo gestionado a través de una base de datos en la nube (**Firebase**).
+        """)
 
