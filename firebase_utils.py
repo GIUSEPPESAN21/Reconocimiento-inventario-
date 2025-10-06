@@ -4,7 +4,6 @@ import json
 import base64
 import logging
 from datetime import datetime
-import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,9 +20,10 @@ class FirebaseUtils:
             # Obtener credenciales desde Streamlit secrets
             import streamlit as st
             
-            if 'firebase_service_account_base64' in st.secrets:
+            # Usar el nombre exacto de tu secret
+            if 'FIREBASE_SERVICE_ACCOUNT_BASE64' in st.secrets:
                 # Decodificar credenciales desde base64
-                creds_base64 = st.secrets['firebase_service_account_base64']
+                creds_base64 = st.secrets['FIREBASE_SERVICE_ACCOUNT_BASE64']
                 creds_json = base64.b64decode(creds_base64).decode('utf-8')
                 creds_dict = json.loads(creds_json)
                 
@@ -41,7 +41,7 @@ class FirebaseUtils:
                 logger.info("Firebase inicializado correctamente")
                 
             else:
-                raise ValueError("firebase_service_account_base64 no encontrado en secrets")
+                raise ValueError("FIREBASE_SERVICE_ACCOUNT_BASE64 no encontrado en secrets")
                 
         except Exception as e:
             logger.error(f"Error al inicializar Firebase: {e}")
