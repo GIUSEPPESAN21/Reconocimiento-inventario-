@@ -43,15 +43,27 @@ class FirebaseUtils:
         """Retorna el timestamp actual en formato ISO."""
         return datetime.now().isoformat()
 
-    def save_inventory_item(self, data):
-        """Guarda un nuevo elemento en la colección 'inventory'."""
+    def save_inventory_item(self, data, custom_id=None):
+        """
+        Guarda un nuevo elemento en la colección 'inventory'.
+        Si se proporciona un custom_id, se usa como ID del documento,
+        previa verificación de que no exista.
+        """
         try:
-            data_to_save = {'name': data.get('descripcion', 'Sin nombre')}
-            data_to_save.update(data)
+            collection_ref = self.db.collection('inventory')
             
-            _, doc_ref = self.db.collection('inventory').add(data_to_save)
-            logger.info(f"Elemento guardado con ID: {doc_ref.id}")
-            return doc_ref.id
+            if custom_id:
+                doc_ref = collection_ref.document(custom_id)
+                if doc_ref.get().exists:
+                    raise ValueError(f"El ID personalizado '{custom_id}' ya existe en el inventario.")
+                doc_ref.set(data)
+                logger.info(f"Elemento guardado con ID personalizado: {custom_id}")
+                return custom_id
+            else:
+                _, doc_ref = collection_ref.add(data)
+                logger.info(f"Elemento guardado con ID autogenerado: {doc_ref.id}")
+                return doc_ref.id
+                
         except Exception as e:
             logger.error(f"Error al guardar en Firestore: {e}")
             raise
@@ -71,7 +83,7 @@ class FirebaseUtils:
             return []
 
     def delete_inventory_item(self, doc_id):
-        """Elimina un elemento de la colección 'inventory'."""
+        """Elimina un elemento por su ID de documento."""
         try:
             self.db.collection('inventory').document(doc_id).delete()
             logger.info(f"Elemento {doc_id} eliminado.")
