@@ -54,7 +54,8 @@ with tab_inventario:
             with st.spinner("Cargando inventario..."):
                 # Usamos el objeto firebase inicializado para obtener los datos
                 inventory_list = firebase.get_all_inventory_items()
-            inventory_names = [item.get('name', 'Nombre no encontrado') for item in inventory_list]
+            # Extraemos el nombre de cada item, que ahora está en el campo 'descripcion' o 'name'
+            inventory_names = [item.get('descripcion') or item.get('name', 'Nombre no encontrado') for item in inventory_list]
         except Exception as e:
             st.error(f"Error al cargar inventario: {e}")
             inventory_names = []
@@ -173,4 +174,3 @@ with tab_acerca_de:
         Utiliza un modelo híbrido de IA que combina la detección de objetos en tiempo real (**YOLO**) 
         con el análisis profundo de imágenes (**Google Gemini**), todo gestionado a través de una base de datos en la nube (**Firebase**).
         """)
-
