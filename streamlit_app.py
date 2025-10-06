@@ -201,7 +201,7 @@ elif page == "📸 Cámara en Vivo":
         st.info("🎥 Activa tu cámara para capturar y analizar elementos de inventario en tiempo real")
     
     with col2:
-        auto_analyze = st.checkbox("🔄 Análisis Automático", value=True)
+        auto_analyze = st.checkbox("🔄 Análisis Automático", value=False)
         confidence_threshold = st.slider("🎯 Umbral de Confianza", 0.1, 1.0, 0.5, 0.1)
     
     # Componente de cámara
@@ -298,7 +298,6 @@ elif page == "📸 Cámara en Vivo":
                                 "archivo": f"camera_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg",
                                 "descripcion": description,
                                 "analisis": analysis,
-                                "detections": detections if 'detections' in locals() else [],
                                 "timestamp": firebase.get_timestamp()
                             }
                             
@@ -493,29 +492,6 @@ elif page == "📊 Dashboard":
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
-            # Gráfico temporal
-            st.subheader("📅 Actividad Temporal")
-            dates = []
-            for item in items:
-                timestamp = item.get('timestamp', '')
-                if timestamp:
-                    try:
-                        date = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).date()
-                        dates.append(date)
-                    except:
-                        pass
-            
-            if dates:
-                date_counts = pd.Series(dates).value_counts().sort_index()
-                fig = px.line(
-                    x=date_counts.index,
-                    y=date_counts.values,
-                    title="Elementos Agregados por Fecha"
-                )
-                fig.update_xaxes(title="Fecha")
-                fig.update_yaxes(title="Cantidad")
-                st.plotly_chart(fig, use_container_width=True)
-            
             # Tabla de elementos recientes
             st.subheader("🕒 Elementos Recientes")
             recent_items = sorted(items, key=lambda x: x.get('timestamp', ''), reverse=True)[:10]
@@ -526,7 +502,7 @@ elif page == "📊 Dashboard":
                     'Tipo': item.get('tipo', 'N/A'),
                     'Archivo': item.get('archivo', 'N/A'),
                     'Fecha': item.get('timestamp', 'N/A')[:10] if item.get('timestamp') else 'N/A',
-                    'ID': item.get('id', 'N/A')[:8] + '...'
+                    'ID': item.get('id', 'N/A')[:8] + '...' if item.get('id') else 'N/A'
                 })
             
             if df_data:
@@ -561,49 +537,54 @@ elif page == "🗃️ Base de Datos":
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("🔄 Actualizar Lista"):
-            st.rerun()
+        refresh_data = st.button("🔄 Actualizar Lista")
     
     with col2:
-        if st.button("📊 Exportar CSV"):
-            try:
-                items = firebase.get_all_inventory_items()
-                if items:
-                    df_data = []
-                    for item in items:
-                        df_data.append({
-                            'ID': item.get('id', ''),
-                            'Tipo': item.get('tipo', ''),
-                            'Archivo': item.get('archivo', ''),
-                            'Descripción': item.get('descripcion', ''),
-                            'Análisis': item.get('analisis', ''),
-                            'Timestamp': item.get('timestamp', '')
-                        })
-                    
-                    df = pd.DataFrame(df_data)
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Descargar CSV",
-                        data=csv,
-                        file_name=f"inventario_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.warning("No hay datos para exportar")
-            except Exception as e:
-                st.error(f"Error al exportar: {e}")
+        export_csv = st.button("📊 Exportar CSV")
     
     with col3:
-        if st.button("🗑️ Limpiar Base de Datos"):
-            if st.checkbox("⚠️ Confirmar eliminación de todos los elementos"):
-                try:
-                    items = firebase.get_all_inventory_items()
-                    for item in items:
-                        firebase.delete_inventory_item(item['id'])
-                    st.success("✅ Base de datos limpiada")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al limpiar: {e}")
+        clear_db = st.button("🗑️ Limpiar Base de Datos")
+    
+    # Procesar exportación CSV
+    if export_csv:
+        try:
+            items = firebase.get_all_inventory_items()
+            if items:
+                df_data = []
+                for item in items:
+                    df_data.append({
+                        'ID': item.get('id', ''),
+                        'Tipo': item.get('tipo', ''),
+                        'Archivo': item.get('archivo', ''),
+                        'Descripción': item.get('descripcion', ''),
+                        'Análisis': item.get('analisis', ''),
+                        'Timestamp': item.get('timestamp', '')
+                    })
+                
+                df = pd.DataFrame(df_data)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Descargar CSV",
+                    data=csv,
+                    file_name=f"inventario_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning("No hay datos para exportar")
+        except Exception as e:
+            st.error(f"Error al exportar: {e}")
+    
+    # Procesar limpieza de base de datos
+    if clear_db:
+        confirm = st.checkbox("⚠️ Confirmar eliminación de todos los elementos")
+        if confirm:
+            try:
+                items = firebase.get_all_inventory_items()
+                for item in items:
+                    firebase.delete_inventory_item(item['id'])
+                st.success("✅ Base de datos limpiada")
+            except Exception as e:
+                st.error(f"Error al limpiar: {e}")
     
     # Mostrar elementos
     try:
@@ -640,26 +621,29 @@ elif page == "🗃️ Base de Datos":
                     
                     with col2:
                         st.write("**Descripción:**", item.get('descripcion', 'N/A'))
-                        st.write("**Análisis:**", item.get('analisis', 'N/A')[:200] + "..." if len(item.get('analisis', '')) > 200 else item.get('analisis', 'N/A'))
+                        analysis = item.get('analisis', 'N/A')
+                        if len(analysis) > 200:
+                            st.write("**Análisis:**", analysis[:200] + "...")
+                        else:
+                            st.write("**Análisis:**", analysis)
                     
                     # Botones de acción
                     col1, col2, col3 = st.columns(3)
                     
                     with col1:
-                        if st.button(f"👁️ Ver Completo", key=f"view_{item['id']}"):
+                        if st.button(f"👁️ Ver Completo", key=f"view_{item['id']}_{i}"):
                             st.json(item)
                     
                     with col2:
-                        if st.button(f"✏️ Editar", key=f"edit_{item['id']}"):
-                            st.session_state.editing_item = item
-                            st.rerun()
+                        if st.button(f"✏️ Editar", key=f"edit_{item['id']}_{i}"):
+                            st.info("Funcionalidad de edición en desarrollo")
                     
                     with col3:
-                        if st.button(f"🗑️ Eliminar", key=f"delete_{item['id']}"):
+                        if st.button(f"🗑️ Eliminar", key=f"delete_{item['id']}_{i}"):
                             try:
                                 firebase.delete_inventory_item(item['id'])
                                 st.success("✅ Elemento eliminado")
-                                st.rerun()
+                                # No usar st.rerun() aquí, mejor mostrar mensaje
                             except Exception as e:
                                 st.error(f"Error al eliminar: {e}")
         else:
@@ -838,25 +822,6 @@ elif page == "⚙️ Configuración":
         st.write(f"**Arquitectura:** {platform.architecture()[0]}")
         st.write(f"**Procesador:** {platform.processor()}")
         st.write(f"**Máquina:** {platform.machine()}")
-    
-    # Logs del sistema
-    st.subheader("📋 Logs del Sistema")
-    
-    if st.button("🔄 Actualizar Logs"):
-        st.rerun()
-    
-    # Mostrar información de la sesión
-    st.subheader("🔍 Información de la Sesión")
-    
-    session_info = {
-        "Timestamp de inicio": datetime.now().isoformat(),
-        "Servicios cargados": len([x for x in [yolo_model, firebase, gemini] if x is not None]),
-        "Página actual": page,
-        "Estado de la aplicación": "Activa"
-    }
-    
-    for key, value in session_info.items():
-        st.write(f"**{key}:** {value}")
 
 # Footer
 st.markdown("---")
