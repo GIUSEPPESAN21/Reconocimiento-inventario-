@@ -48,7 +48,7 @@ yolo_model, firebase, gemini = initialize_services()
 if not all([yolo_model, firebase, gemini]):
     st.stop()
 
-# --- BARRA LATERAL DE NAVEGACIÓN ---
+# --- BARRA LATERAL DE NAVEGÁCIÓN ---
 st.sidebar.title("Navegación Principal")
 page = st.sidebar.radio(
     "Selecciona una sección:",
@@ -67,12 +67,12 @@ if page == "🏠 Inicio":
         items = firebase.get_all_inventory_items()
         item_count = len(items)
         image_items = sum(1 for item in items if item.get("tipo") in ["camera", "imagen"])
-        text_items = sum(1 for item in items if item.get("tipo") == "texto")
+        manual_items = sum(1 for item in items if item.get("tipo") == "manual")
 
         col1, col2, col3 = st.columns(3)
         col1.metric("📦 Total de Artículos Registrados", item_count)
         col2.metric("🖼️ Análisis desde Imágenes", image_items)
-        col3.metric("📝 Registros Manuales/Texto", text_items)
+        col3.metric("📝 Registros Manuales", manual_items)
 
     except Exception as e:
         st.warning(f"No se pudieron cargar las estadísticas del inventario: {e}")
@@ -90,26 +90,27 @@ if page == "🏠 Inicio":
 elif page == "📸 Análisis de Imagen":
     st.header("📸 Detección y Análisis de Objetos por Imagen")
 
-    if 'last_analysis' in st.session_state:
+    if 'analysis_in_progress' in st.session_state and st.session_state.analysis_in_progress:
         st.subheader("✔️ Resultado del Análisis de Gemini")
         analysis_text = st.session_state.last_analysis
         
         try:
-            analysis_data = json.loads(analysis_text)
+            # Corrección: Limpiar el string de la respuesta de la IA antes de procesar
+            clean_json_str = analysis_text.strip().replace("```json", "").replace("```", "")
+            analysis_data = json.loads(clean_json_str)
             
-            # --- NUEVO: Visualización en texto normal ---
             if "error" not in analysis_data:
+                # --- NUEVO: Visualización en texto normal ---
                 st.markdown('<div class="report-box">', unsafe_allow_html=True)
                 st.write(f"<span class='report-header'>Elemento Identificado:</span> <span class='report-data'>{analysis_data.get('elemento_identificado', 'No especificado')}</span>", unsafe_allow_html=True)
-                st.write(f"<span class='report-header'>Cantidad Detectada:</span> <span class='report-data'>{analysis_data.get('cantidad', 'No especificada')}</span>", unsafe_allow_html=True)
-                st.write(f"<span class='report-header'>Estado Aparente:</span> <span class='report-data'>{analysis_data.get('estado', 'No especificado')}</span>", unsafe_allow_html=True)
-                st.write(f"<span class='report-header'>Categoría Sugerida:</span> <span class='report-data'>{analysis_data.get('categoria_sugerida', 'No especificada')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Cantidad Detectada:</span> <span class='report-data'>{analysis_data.get('cantidad_aproximada', 'No especificada')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Estado Aparente:</span> <span class='report-data'>{analysis_data.get('estado_condicion', 'No especificado')}</span>", unsafe_allow_html=True)
+                st.write(f"<span class='report-header'>Categoría Sugerida:</span> <span class='report-data'>{analysis_data.get('posible_categoria_de_inventario', 'No especificada')}</span>", unsafe_allow_html=True)
                 
-                features = analysis_data.get('caracteristicas', [])
+                features = analysis_data.get('caracteristicas_distintivas', [])
                 if features:
                     st.markdown("<span class='report-header'>Características Notables:</span>", unsafe_allow_html=True)
-                    for feature in features:
-                        st.markdown(f"- {feature}")
+                    st.markdown(f"- {features}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
                 # --- NUEVO: Formulario de guardado avanzado ---
@@ -117,7 +118,7 @@ elif page == "📸 Análisis de Imagen":
                     st.subheader("💾 Registrar en la Base de Datos")
                     custom_id = st.text_input("ID Personalizado (SKU, Código de Producto, etc.):", key="custom_id")
                     description = st.text_input("Descripción del Producto:", value=analysis_data.get('elemento_identificado', ''))
-                    quantity = st.number_input("Unidades Existentes:", min_value=1, value=analysis_data.get('cantidad', 1), step=1)
+                    quantity = st.number_input("Unidades Existentes:", min_value=1, value=analysis_data.get('cantidad_aproximada', 1), step=1)
                     
                     submitted = st.form_submit_button("Añadir a la Base de Datos")
 
@@ -128,7 +129,7 @@ elif page == "📸 Análisis de Imagen":
                             with st.spinner("Guardando..."):
                                 data_to_save = {
                                     "custom_id": custom_id,
-                                    "name": description, # 'name' para compatibilidad con el listado
+                                    "name": description,
                                     "quantity": quantity,
                                     "tipo": "imagen" if hasattr(st.session_state, 'last_image_name') else "camera",
                                     "analisis_ia": analysis_data,
@@ -136,7 +137,7 @@ elif page == "📸 Análisis de Imagen":
                                 }
                                 firebase.save_inventory_item(data_to_save, custom_id)
                                 st.success(f"¡Artículo '{description}' con ID '{custom_id}' guardado con éxito!")
-                                del st.session_state['last_analysis']
+                                st.session_state.analysis_in_progress = False
                                 st.rerun()
 
             else:
@@ -147,7 +148,13 @@ elif page == "📸 Análisis de Imagen":
             with st.expander("Ver detalles técnicos (respuesta sin procesar)"):
                 st.code(analysis_text, language='text')
 
+        # Botón para volver a analizar
+        if st.button("↩️ Analizar otra imagen"):
+            st.session_state.analysis_in_progress = False
+            st.rerun()
+
     else:
+        # Interfaz para capturar o subir la imagen
         img_source = st.radio("Elige la fuente de la imagen:", ["Cámara en vivo", "Subir un archivo"], horizontal=True)
         img_buffer = None
         if img_source == "Cámara en vivo":
@@ -190,6 +197,7 @@ elif page == "📸 Análisis de Imagen":
                             analysis_text = gemini.analyze_image(cropped_pil_image, f"Objeto detectado como {class_name}")
                             st.session_state.last_analysis = analysis_text
                             st.session_state.last_image_name = img_buffer.name if hasattr(img_buffer, 'name') else f"camera_{firebase.get_timestamp()}.jpg"
+                            st.session_state.analysis_in_progress = True
                             st.rerun()
 
 elif page == "🗃️ Base de Datos":
@@ -218,7 +226,7 @@ elif page == "🗃️ Base de Datos":
                         firebase.save_inventory_item(data_to_save, manual_custom_id)
                         st.success(f"Artículo '{manual_name}' guardado con éxito.")
                     except ValueError as e:
-                        st.error(str(e)) # Muestra el error si el ID ya existe
+                        st.error(str(e))
                     except Exception as e:
                         st.error(f"Ocurrió un error inesperado: {e}")
 
@@ -256,7 +264,6 @@ elif page == "📊 Dashboard":
         
         if items:
             # --- CORRECCIÓN DEL ERROR 'timestamp' ---
-            # Filtramos los items para asegurarnos de que tengan los campos necesarios
             valid_items = [item for item in items if 'timestamp' in item and 'tipo' in item]
             if not valid_items:
                  st.warning("No hay registros con datos suficientes para generar un dashboard.")
@@ -277,7 +284,6 @@ elif page == "📊 Dashboard":
 
                 st.subheader("Actividad Reciente en el Inventario")
                 df_recent = df.sort_values('timestamp', ascending=False).head(10)
-                # Seleccionamos columnas que sabemos que existen
                 display_cols = ['timestamp', 'tipo']
                 if 'name' in df_recent.columns: display_cols.append('name')
                 if 'custom_id' in df_recent.columns: display_cols.append('custom_id')
@@ -315,3 +321,4 @@ elif page == "👥 Acerca de":
             st.title("Jhon Alejandro Mojica")
             st.subheader("_Profesor y Tutor del Proyecto_")
             st.markdown("- 📧 **Email:** [jhon.mojica@uniminuto.edu.co](mailto:jhon.mojica@uniminuto.edu.co)")
+
