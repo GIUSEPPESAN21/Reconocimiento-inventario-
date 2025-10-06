@@ -46,22 +46,24 @@ if 'current_page' not in st.session_state:
 
 @st.cache_resource
 def load_yolo_model():
-    try {
+    """Carga el modelo YOLOv8 una sola vez."""
+    try:
         logger.info("Cargando modelo YOLOv8...")
         model = YOLO('yolov8m.pt')
         logger.info("Modelo YOLOv8 cargado.")
         return model
-    } except Exception as e:
+    except Exception as e:
         st.error(f"Error al cargar YOLO: {e}")
         return None
 
 @st.cache_resource
 def initialize_services():
-    try {
+    """Inicializa Firebase y Gemini una sola vez."""
+    try:
         firebase = FirebaseUtils()
         gemini = GeminiUtils()
         return firebase, gemini
-    } except Exception as e:
+    except Exception as e:
         st.error(f"Error al inicializar servicios. Detalle: {e}")
         return None, None
 
@@ -103,7 +105,6 @@ def handle_save_to_inventory():
 # --- Páginas de la Aplicación ---
 
 if page == "🏠 Inicio":
-    # (El código de esta página no necesita cambios funcionales)
     st.header("🏠 Bienvenido al Sistema de Reconocimiento de Inventario")
     try:
         items = firebase.get_all_inventory_items()
@@ -131,14 +132,12 @@ elif page in ["📸 Cámara en Vivo", "📁 Subir Imagen"]:
         image_pil = Image.open(image_input)
         st.image(image_pil, caption="Imagen a analizar")
 
-        # --- Análisis con Gemini ---
         st.subheader("🧠 Análisis con Gemini AI")
         description = st.text_input("Descripción adicional (opcional):", key=f"{'cam' if is_camera else 'upload'}_desc")
 
         if st.button("✨ Analizar con IA", key=f"{'cam' if is_camera else 'upload'}_analyze"):
             with st.spinner("Analizando con Gemini AI..."):
                 try:
-                    # El SDK de Gemini maneja objetos PIL directamente
                     analysis = gemini.analyze_image(image_pil, description)
                     st.session_state.analysis_result = analysis
                     st.session_state.data_to_save = {
@@ -198,7 +197,7 @@ elif page == "🗃️ Base de Datos":
                         try:
                             firebase.delete_inventory_item(item['id'])
                             st.success(f"Elemento {item['id']} eliminado.")
-                            st.rerun() # Recarga para mostrar la lista actualizada
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Error al eliminar: {e}")
         else:
@@ -206,8 +205,6 @@ elif page == "🗃️ Base de Datos":
     except Exception as e:
         st.error(f"Error al cargar inventario: {e}")
 
-# ... (El resto de las páginas como Dashboard, Información y Configuración no necesitan cambios funcionales y se omiten por brevedad) ...
-# --- PÁGINAS RESTANTES (SIN CAMBIOS FUNCIONALES) ---
 elif page == "📊 Dashboard":
     st.header("📊 Dashboard de Inventario")
     try:
