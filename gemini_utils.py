@@ -8,9 +8,11 @@ logger = logging.getLogger(__name__)
 
 class GeminiUtils:
     def __init__(self):
-        self.api_key = os.getenv('GEMINI_API_KEY')
+        # Obtener API key desde Streamlit secrets
+        import streamlit as st
+        self.api_key = st.secrets.get('GEMINI_API_KEY')
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY no encontrada en las variables de entorno")
+            raise ValueError("GEMINI_API_KEY no encontrada en secrets")
         
         genai.configure(api_key=self.api_key)
         self.model = self._get_available_model()
@@ -22,6 +24,8 @@ class GeminiUtils:
             "gemini-2.0-flash-exp",  # Modelo experimental más reciente
             "gemini-1.5-flash-latest",  # Versión más reciente de 1.5
             "gemini-1.5-pro-latest",   # Versión más reciente de 1.5 pro
+            "gemini-1.5-flash",        # Modelo básico
+            "gemini-1.5-pro",          # Modelo pro básico
         ]
         
         for modelo in modelos_disponibles:
